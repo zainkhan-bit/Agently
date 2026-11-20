@@ -1,0 +1,21 @@
+# Optional local PostgreSQL. Not verified on the current dev machine (Docker not installed);
+# a native PostgreSQL install works equally well — see README.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: agently
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agently-dev-only}
+      POSTGRES_DB: agently
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - agently-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agently -d agently"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  agently-db:
