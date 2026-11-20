@@ -1,7 +1,7 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 0 — Repository audit and engineering foundation
-**Next smallest task:** Slice 0.2 — product vision and master PRD
+**Next smallest task:** Slice 0.3 — architecture and stack decisions
 
 ## Blocked / needs owner input
 
@@ -18,6 +18,16 @@
 - **Test results:** N/A
 - **Manual checks:** Confirmed repository root; confirmed only `AGENT_BUILD_GUIDE.md` existed and it is unchanged; confirmed remote is empty and public; confirmed Git identity resolves to the owner's global config; confirmed `git status` shows only intended files.
 - **Known limitations / blockers:** Docker not installed locally (Compose unverifiable on this machine).
-- **Commit:** see `git log` (first commit on `main`)
-- **Push result:** recorded in the following slice entry
+- **Commit:** `7d8238d`
+- **Push result:** Success — created `origin/main`
 - **Next smallest task:** Slice 0.2
+
+### Slice 0.2 — MVP specification
+- **Date:** 2026-11-20
+- **What changed:** Product vision, master PRD with testable acceptance criteria (IDs AUTH/WS/AGT/MDL/CHAT/KB/MEM/TOOL/USE/DATA), explicit exclusions, open questions, roadmap, ADR-0001 recording provisional decisions. Added `.gitattributes` to normalise line endings (LF).
+- **Files/modules affected:** `docs/PRODUCT_VISION.md`, `docs/MASTER_PRD.md`, `docs/ROADMAP.md`, `docs/decisions/ADR-0001-provisional-product-decisions.md`, `.gitattributes`
+- **Tests run:** Documentation review only (no code).
+- **Manual checks:** Every in-scope MVP feature has an acceptance criterion; every excluded feature is listed; the 10-step MVP journey depends on no excluded feature.
+- **Known limitations / blockers:** None.
+- **Commit / push:** see Slice 0.3 entry
+- **Next smallest task:** Slice 0.3 — architecture and stack decisions
