@@ -1,7 +1,7 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 0 — Repository audit and engineering foundation
-**Next smallest task:** Slice 0.3 — architecture and stack decisions
+**Next smallest task:** Slice 0.4 — reproducible local development (backend health endpoint, frontend shell)
 
 ## Blocked / needs owner input
 
@@ -29,5 +29,15 @@
 - **Tests run:** Documentation review only (no code).
 - **Manual checks:** Every in-scope MVP feature has an acceptance criterion; every excluded feature is listed; the 10-step MVP journey depends on no excluded feature.
 - **Known limitations / blockers:** None.
-- **Commit / push:** see Slice 0.3 entry
+- **Commit / push:** `f8837d4` — pushed to `origin/main`
 - **Next smallest task:** Slice 0.3 — architecture and stack decisions
+
+### Slice 0.3 — Technical foundation
+- **Date:** 2026-11-20
+- **What changed:** System architecture document; ADR-0002 (stack), ADR-0003 (server-side session auth), ADR-0004 (PostgreSQL-backed jobs).
+- **Files/modules affected:** `docs/SYSTEM_ARCHITECTURE.md`, `docs/decisions/ADR-0002..0004`
+- **Tests run:** Documentation review only.
+- **Manual checks:** One framework/ORM/migration tool/queue/test approach per layer; modular monolith preserved; no duplicate package managers chosen.
+- **Known limitations / blockers:** None.
+- **Commit / push:** see Slice 0.4 entry
+- **Next smallest task:** Slice 0.4
