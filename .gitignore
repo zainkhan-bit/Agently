@@ -1,0 +1,51 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+next-env.d.ts
+playwright-report/
+test-results/
+
+# Data, uploads, dumps, logs
+storage/
+uploads/
+*.sql.gz
+*.dump
+*.sqlite
+*.db
+*.log
+logs/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.claude/settings.local.json
