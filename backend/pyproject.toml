@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = ["db: needs a PostgreSQL server (DATABASE_URL); skipped loudly when unset"]
 
 [tool.ruff]
 line-length = 100

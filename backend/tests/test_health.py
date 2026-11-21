@@ -17,11 +17,14 @@ def client() -> TestClient:
 
 @pytest.fixture
 def reset_caches():
+    # The session factory caches an engine too; clear it so no test reuses a stale one.
     get_settings.cache_clear()
     database.get_engine.cache_clear()
+    database.get_session_factory.cache_clear()
     yield
     get_settings.cache_clear()
     database.get_engine.cache_clear()
+    database.get_session_factory.cache_clear()
 
 
 def test_liveness_ok(client: TestClient) -> None:
