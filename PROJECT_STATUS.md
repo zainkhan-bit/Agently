@@ -1,11 +1,12 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 1 — SaaS foundation (Phase 0 exit gate met)
-**Next smallest task:** Slice 1.1 — database configuration, SQLAlchemy models, Alembic migrations for users/workspaces/memberships/sessions
+**Next smallest task:** Slice 1.2 — authentication (register, login, logout, `/me`, rate limiting) on top of the Slice 1.1 schema
 
 ## Blocked / needs owner input
 
-- **Slice 1.1 (database) is BLOCKED on local PostgreSQL credentials.** PostgreSQL 18 is running on `localhost:5432` but requires a password the agent does not have. Owner action: create the `agently` role/database (README, Setup §1) and put `DATABASE_URL` in `backend/.env` (never committed).
+- ~~Slice 1.1 blocked on local PostgreSQL credentials~~ — resolved 2026-11-21: `GET /api/health/ready` returns `database: ok`.
+- **Known gap (owner: Slice 1.3):** Slice 1.1 hard-deletes users with cascades, so deleting a user's account can leave a workspace with no owner. Slice 1.3 must add the rule "the last owner cannot leave the workspace or delete their account" (or transfer/delete the workspace first), with tests.
 - Later (Phase 2.3 / 3.1): a real model-provider API key is needed for real-provider smoke tests. Until then those tests are BLOCKED and a mock provider is used.
 
 ## Slice log
@@ -60,5 +61,42 @@
 
 - **Manual checks:** Ran `uvicorn` → `GET /api/health` 200, `/api/health/ready` 503 `not_configured`. Ran `next start` → same response through the `/api/*` proxy; browser shows "Service degraded: The database is not configured…" with a Retry button.
 - **Known limitations / blockers:** DB readiness never verified as `ok` against a real database yet (blocked as above). `starlette.testclient` emits a deprecation warning about `httpx`; harmless for now. `eslint@9` is flagged deprecated by npm but is what `eslint-config-next@15` supports. First `npm install` hung on a registry fetch and was retried with `--fetch-timeout`; noted in README.
-- **Commit / push:** see Slice 1.1 entry
+- **Commit / push:** `1b8b785` — pushed to `origin/main`
 - **Next smallest task:** Slice 1.1 (blocked on DB credentials)
+
+### Slice 1.1 — Database and migrations
+- **Date:** 2026-11-21
+- **What changed:** Request-scoped SQLAlchemy session (no implicit commit, rollback on error). Models plus the initial Alembic migration for `users`, `workspaces`, `memberships` and `sessions`:
+  - UUID keys via `gen_random_uuid()`, `timestamptz` everywhere
+  - Case-insensitive unique email (`lower(email)` index)
+  - Hash-only session tokens with `expires_at`/`revoked_at`
+  - `owner`/`member` role check constraint
+  - Hard-delete `ON DELETE CASCADE`
+  - Alembic reads `DATABASE_URL` from settings.
+
+  The test suite creates and drops its own `agently_test`/`agently_migrations_scratch` databases behind a `_test`/`_scratch` name guard, and DB tests skip loudly when `DATABASE_URL` is unset. Added a development-only idempotent seed script and `docs/DATABASE_DESIGN.md` (deletion behaviour, PRD DATA-1).
+- **Plan:** `docs/plans/2026-11-21-1341-feat-database-and-migrations-plan.md`
+- **Files/modules affected:** `backend/app/core/{database,model_mixins}.py`, `backend/app/models.py`, `backend/app/modules/{identity,workspaces}/`, `backend/alembic.ini`, `backend/migrations/`, `backend/scripts/seed_dev.py`, `backend/tests/*`, `backend/pyproject.toml`, `README.md`, `docs/DATABASE_DESIGN.md`, `docs/SYSTEM_ARCHITECTURE.md`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (44, incl. 21 DB tests that ran) | `backend: .venv\Scripts\python -m pytest` | Fresh-DB upgrade, downgrade/re-upgrade, no model drift, email/membership/role/FK constraints, both cascades, session lifecycle, seed idempotency, drop guard, no password in migration errors |
+| Backend tests without DB | PASS (23) + SKIPPED (21) | `DATABASE_URL= .venv/Scripts/python -m pytest` (Git Bash) | Printed `21 database tests SKIPPED: DATABASE_URL not set`; the skipped tests are not counted as passes |
+| Test sensitivity | Verified | temporarily broke the migration | Removing the workspace cascade and the email index failed 3 tests; restored |
+| Backend lint/format | PASS | `ruff check .` / `ruff format --check .` | |
+| Migrations on dev DB | PASS | `alembic upgrade head`, `alembic check`, `downgrade base`, `upgrade head` | `No new upgrade operations detected` |
+| Seed script | PASS | `python -m scripts.seed_dev` (x2) | Created demo user/workspace, then no-op |
+| Readiness | PASS | `curl.exe http://localhost:8000/api/health/ready` | `{"status":"ready","checks":{"database":"ok"}}` |
+| Frontend tests / lint / types | PASS (5) | `npm test`, `npm run lint`, `npm run typecheck` | Unchanged |
+
+- **Manual checks:** After test runs, `agently_test` and `agently_migrations_scratch` no longer exist and the dev `agently` database is untouched. The other databases on the server (`urbanpulse`, `urbanpulse_test`) are never used: the suite only uses its two fixed names.
+- **Code review:** Run inline in one context by the implementing agent across correctness, testing, migration, security and standards. No reviewer subagents and no cross-model peer, so the review was not independent. Two minor fixes applied: corrected the ownerless-workspace wording in `docs/DATABASE_DESIGN.md`, and the health tests now also clear the cached session factory.
+- **Known limitations / blockers:**
+  - The ownerless-workspace gap stays open for Slice 1.3 (see above).
+  - Two pytest runs at the same time on one machine would share and force-drop `agently_test`.
+  - Windows PowerShell 5.1 deletes a variable set to `""`, so check the no-DB path from Git Bash (`DATABASE_URL= ...`).
+  - No CI workflow yet.
+- **Commit / push:** `7a9f7bc` (code) plus a follow-up docs commit; see push result below
+- **Next smallest task:** Slice 1.2 — authentication
+

@@ -38,7 +38,7 @@ backend/app/
   core/                 # config, database session, security, logging, errors
   modules/<module>/     # models.py, schemas.py, service.py, router.py
   shared/               # permissions, pagination, common schemas
-backend/migrations/     # Alembic
+backend/migrations/     # Alembic (schema + deletion rules: docs/DATABASE_DESIGN.md)
 backend/tests/
 ```
 

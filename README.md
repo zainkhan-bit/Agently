@@ -45,8 +45,12 @@ cd backend
 python -m venv .venv
 .venv\Scripts\pip install -r requirements-dev.txt -c constraints.txt
 Copy-Item .env.example .env   # then edit DATABASE_URL
+.venv\Scripts\alembic upgrade head            # create/upgrade the schema
+.venv\Scripts\python -m scripts.seed_dev      # optional: DEVELOPMENT-only demo user + workspace
 .venv\Scripts\uvicorn app.main:app --reload --port 8000
 ```
+
+The seed script creates `demo@agently.local` / `agently-demo-password` (a public dev-only credential), is safe to re-run, and refuses to run when `ENVIRONMENT=production`. Schema and deletion rules: `docs/DATABASE_DESIGN.md`.
 
 macOS/Linux: use `.venv/bin/...` and `cp`.
 
@@ -77,7 +81,10 @@ Backend (from `backend/`):
 .venv\Scripts\python -m pytest
 .venv\Scripts\ruff check .
 .venv\Scripts\ruff format --check .
+.venv\Scripts\alembic check   # models and migrations in sync
 ```
+
+Database tests need `DATABASE_URL` (the `agently` role needs `CREATEDB`). They create and drop their own `agently_test` / `agently_migrations_scratch` databases and never touch your dev database. Without `DATABASE_URL` they are skipped, and pytest ends with `N database tests SKIPPED: DATABASE_URL not set`. That is not a pass. To check this locally even though `backend/.env` exists, run from Git Bash: `DATABASE_URL= .venv/Scripts/python -m pytest`. Windows PowerShell 5.1 deletes a variable set to `""`, so `.env` would be used instead.
 
 Frontend (from `frontend/`):
 
