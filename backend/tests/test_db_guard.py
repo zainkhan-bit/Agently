@@ -29,6 +29,21 @@ def test_dev_database_cannot_be_dropped_or_recreated(operation) -> None:
         operation(UNREACHABLE, "agently")
 
 
+@pytest.mark.parametrize(
+    "base",
+    [
+        "postgresql+psycopg://u:p@localhost:5432/agently?dbname=agently",
+        "postgresql+psycopg://u:p@localhost:5432/agently?DATABASE=agently&sslmode=disable",
+    ],
+)
+def test_derived_url_cannot_be_redirected_by_query_parameters(base: str) -> None:
+    # What the driver will actually connect to, not just what the URL path says.
+    url = db_utils.sibling_url(base, db_utils.TEST_DATABASE_NAME)
+    _, connect_kwargs = url.get_dialect()().create_connect_args(url)
+    assert connect_kwargs["dbname"] == db_utils.TEST_DATABASE_NAME
+    assert "database" not in {key.lower() for key in url.query}
+
+
 def test_suite_database_names_are_disposable() -> None:
     db_utils.assert_disposable_name(db_utils.TEST_DATABASE_NAME)
     db_utils.assert_disposable_name(db_utils.SCRATCH_DATABASE_NAME)

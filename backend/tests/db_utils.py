@@ -30,8 +30,17 @@ def assert_disposable_name(name: str) -> None:
 
 
 def sibling_url(base_url: str | URL, database: str) -> URL:
-    """Same server and credentials as ``base_url``, different database."""
-    return make_url(base_url).set(database=database)
+    """Same server and credentials as ``base_url``, different database.
+
+    psycopg lets a ``?dbname=`` (or ``?database=``) query parameter override the path's
+    database name, so those keys are stripped: otherwise a URL like ``.../agently?dbname=agently``
+    would point the "throwaway" test engines at the real development database.
+    """
+    url = make_url(base_url)
+    url = url.difference_update_query(
+        [key for key in url.query if key.lower() in {"dbname", "database"}]
+    )
+    return url.set(database=database)
 
 
 def _maintenance_engine(base_url: str | URL):
