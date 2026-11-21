@@ -49,3 +49,8 @@ Thumbs.db
 .idea/
 .vscode/
 .claude/settings.local.json
+
+# Claude Code tooling
+AUDIT.md
+.audit/
+graphify-out/

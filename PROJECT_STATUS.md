@@ -97,6 +97,7 @@
   - Two pytest runs at the same time on one machine would share and force-drop `agently_test`.
   - Windows PowerShell 5.1 deletes a variable set to `""`, so check the no-DB path from Git Bash (`DATABASE_URL= ...`).
   - No CI workflow yet.
-- **Commit / push:** `7a9f7bc` (code) plus a follow-up docs commit; see push result below
+- **Commit / push:** `7a9f7bc` (code), `2383ca8` (docs) — both pushed to `origin/main`.
+- **Independent review (after commit):** 7 Claude reviewer subagents, no external model; verdict "Ready with fixes", no P0/P1. Follow-up fix `92f0b86`: a `?dbname=` query parameter in `DATABASE_URL` could point test engines at the dev database. Learnings: `docs/solutions/` (`1ff8e1e`). The open P2/P3 items (concurrent-run name collisions, a fully skipped run exits 0, no host check) are listed in `docs/solutions/best-practices/guarded-self-managing-test-databases.md`.
 - **Next smallest task:** Slice 1.2 — authentication
 
