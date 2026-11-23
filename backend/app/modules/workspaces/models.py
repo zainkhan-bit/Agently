@@ -9,6 +9,7 @@ from app.core.database import Base
 from app.core.model_mixins import TimestampMixin, UUIDPrimaryKeyMixin
 from app.modules.identity.models import User
 
+# The only list of role values: the check constraint below is built from it.
 ROLES = ("owner", "member")
 
 
@@ -30,7 +31,7 @@ class Membership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         # One membership per (user, workspace); also serves "which workspaces is this user in".
         UniqueConstraint("user_id", "workspace_id"),
         # A check constraint (not a PG enum) so adding a role later is a simple constraint swap.
-        CheckConstraint("role IN ('owner', 'member')", name="role_valid"),
+        CheckConstraint(f"role IN ({', '.join(repr(role) for role in ROLES)})", name="role_valid"),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(

@@ -87,3 +87,14 @@ def test_get_db_without_database_url_raises_clear_error(monkeypatch) -> None:
         get_settings.cache_clear()
         database.get_engine.cache_clear()
         database.get_session_factory.cache_clear()
+
+
+def test_database_errors_do_not_expose_parameters(monkeypatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://u:p@localhost/agently_test")
+    get_settings.cache_clear()
+    database.get_engine.cache_clear()
+    try:
+        assert database.get_engine().hide_parameters is True
+    finally:
+        database.get_engine.cache_clear()
+        get_settings.cache_clear()

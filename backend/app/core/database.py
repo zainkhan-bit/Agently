@@ -37,6 +37,8 @@ def get_engine() -> Engine:
     return create_engine(
         settings.database_url.get_secret_value(),
         pool_pre_ping=True,
+        # Logged errors must not carry emails, password hashes or token hashes.
+        hide_parameters=True,
         connect_args={"connect_timeout": settings.database_connect_timeout_seconds},
     )
 

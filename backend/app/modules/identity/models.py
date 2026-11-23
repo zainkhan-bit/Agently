@@ -45,3 +45,18 @@ class UserSession(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
 
     def __repr__(self) -> str:  # never include the token hash
         return f"UserSession(id={self.id!s}, user_id={self.user_id!s})"
+
+
+class AuthThrottleEvent(UUIDPrimaryKeyMixin, Base):
+    """One counted login or signup attempt. Keys are hashes: no plaintext email is stored."""
+
+    __tablename__ = "auth_throttle_events"
+    __table_args__ = (
+        Index("ix_auth_throttle_events_lookup", "scope", "key_hash", "created_at"),
+        Index("ix_auth_throttle_events_created_at", "created_at"),
+    )
+
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Set from app.core.clock (no server default) so counting and cleanup share one time source.
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

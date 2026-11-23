@@ -15,7 +15,13 @@ from tests.db_utils import sibling_url
 
 pytestmark = pytest.mark.db
 
-IDENTITY_TABLES = {"users", "workspaces", "memberships", "sessions"}
+IDENTITY_TABLES = {
+    "users",
+    "workspaces",
+    "memberships",
+    "sessions",
+    "auth_throttle_events",
+}
 
 
 def _tables(engine) -> set[str]:

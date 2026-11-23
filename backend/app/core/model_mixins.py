@@ -1,14 +1,12 @@
 """Column conventions shared by every table: UUID primary keys and timezone-aware timestamps."""
 
 import uuid
-from datetime import UTC, datetime
+from datetime import datetime
 
 from sqlalchemy import DateTime, Uuid, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-
-def utc_now() -> datetime:
-    return datetime.now(UTC)
+from app.core import clock
 
 
 class UUIDPrimaryKeyMixin:
@@ -31,5 +29,5 @@ class TimestampMixin(CreatedAtMixin):
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
-        onupdate=utc_now,
+        onupdate=lambda: clock.now(),
     )

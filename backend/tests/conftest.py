@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from tests import db_utils
+from tests.auth_helpers import advance, api, auth_app, configure, make_client  # noqa: F401
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 SKIP_REASON = "DATABASE_URL not set"
@@ -94,7 +95,13 @@ def db_session(test_engine: Engine) -> Iterator[Session]:
     """A session whose work is rolled back after the test, even if the test commits."""
     connection = test_engine.connect()
     outer = connection.begin()
-    session = Session(bind=connection, join_transaction_mode="create_savepoint")
+    session = Session(
+        bind=connection,
+        join_transaction_mode="create_savepoint",
+        # Same as get_session_factory, so tests see production's flush behaviour.
+        autoflush=False,
+        expire_on_commit=False,
+    )
     try:
         yield session
     finally:
