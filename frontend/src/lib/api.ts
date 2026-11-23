@@ -89,3 +89,13 @@ export function errorMessage(error: unknown): string {
   if (error instanceof ApiError || error instanceof NetworkError) return error.message;
   return "Something went wrong. Please try again.";
 }
+
+/** First message per field of a validation error. Empty for any other error. */
+export function fieldErrors(error: unknown): Record<string, string> {
+  const errors: Record<string, string> = {};
+  if (!(error instanceof ApiError) || error.code !== "validation_error") return errors;
+  for (const { loc, msg } of (error.details ?? []) as { loc: unknown[]; msg: string }[]) {
+    errors[String(loc.at(-1))] ??= msg;
+  }
+  return errors;
+}

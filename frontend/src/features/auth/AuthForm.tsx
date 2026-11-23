@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useRef, useState } from "react";
 
-import { ApiError, apiPost, errorMessage } from "@/lib/api";
+import { apiPost, errorMessage, fieldErrors } from "@/lib/api";
 
 const COPY = {
   register: {
@@ -26,16 +26,8 @@ const COPY = {
 type Errors = { form?: string; email?: string; password?: string };
 
 function toErrors(error: unknown): Errors {
-  if (error instanceof ApiError && error.code === "validation_error") {
-    const errors: Errors = {};
-    const details = (error.details ?? []) as { loc: unknown[]; msg: string }[];
-    for (const { loc, msg } of details) {
-      const field = loc.at(-1);
-      if (field === "email" || field === "password") errors[field] ??= msg;
-    }
-    if (errors.email || errors.password) return errors;
-  }
-  return { form: errorMessage(error) };
+  const { email, password } = fieldErrors(error);
+  return email || password ? { email, password } : { form: errorMessage(error) };
 }
 
 export function AuthForm({ mode }: { mode: "register" | "login" }) {

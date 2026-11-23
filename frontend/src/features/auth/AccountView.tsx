@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
@@ -61,6 +62,9 @@ export function AccountView() {
     <div className="flex flex-col gap-4">
       <h1 className="text-2xl font-bold">Account</h1>
       <p className="break-words">Signed in as {state.email}</p>
+      <Link href="/workspaces" className="underline">
+        Workspaces
+      </Link>
       {signOutError && <p role="alert">{signOutError}</p>}
       <button
         type="button"
