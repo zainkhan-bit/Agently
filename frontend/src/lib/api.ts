@@ -74,3 +74,18 @@ export async function apiFetch<T>(
   if (response.status >= 500) throw new NetworkError();
   throw new ApiError(response.status, "unknown_error", "Request failed.");
 }
+
+/** POST JSON. The session cookie is HttpOnly: the browser sends it, scripts never see it. */
+export function apiPost<T>(path: string, body?: unknown): Promise<{ status: number; data: T }> {
+  return apiFetch<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+}
+
+/** Text to show for any failed request. */
+export function errorMessage(error: unknown): string {
+  if (error instanceof ApiError || error instanceof NetworkError) return error.message;
+  return "Something went wrong. Please try again.";
+}
