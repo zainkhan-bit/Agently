@@ -53,7 +53,11 @@ Routes authenticate, validate, and call a service. Services own business rules a
 
 ## 5. Authentication (see ADR-0003)
 
-Server-side sessions: opaque random token in an `HttpOnly`, `SameSite=Lax`, `Secure`-in-production cookie; only the SHA-256 hash is stored. Passwords hashed with Argon2id. Mutating requests require a matching `Origin` (or `X-Requested-With`) as CSRF defence.
+Server-side sessions: opaque random token in an `HttpOnly`, `SameSite=Lax` cookie that is `Secure` everywhere except development; only the SHA-256 hash is stored. Passwords hashed with Argon2id. Every state-changing request requires an allowlisted `Origin` header as CSRF defence (`app/core/origin_guard.py`).
+
+Every route depends on `get_current_user` unless it is listed in `PUBLIC_ROUTES` (`app/modules/identity/router.py`); `tests/test_route_inventory.py` enforces this.
+
+Login and signup throttling counts rows in `auth_throttle_events`. The client IP is the socket peer unless `TRUSTED_PROXY_HOPS` says how many proxies append to `X-Forwarded-For`. Uvicorn must always run with `--no-proxy-headers`; by default it overwrites the peer from that header for local connections. IPv6 clients are throttled by /64. The Next.js rewrite forwards a client-sent `X-Forwarded-For` unchanged, so it is never a trusted hop: with Next.js as the only proxy, all users share one IP bucket. Production needs an edge proxy that appends the real client address, and only the proxies may reach the backend.
 
 ## 6. Errors
 
@@ -66,7 +70,7 @@ All configuration via environment variables (`.env` locally, never committed). `
 ## 8. Local development services
 
 - PostgreSQL (native install or `docker compose up db`).
-- Backend: `uvicorn app.main:app --reload` on port 8000.
+- Backend: `uvicorn app.main:app --reload --no-proxy-headers` on port 8000.
 - Frontend: `npm run dev` on port 3000, proxying `/api/*` to the backend.
 
 ## 9. Deployment shape (initial)

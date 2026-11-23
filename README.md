@@ -4,7 +4,7 @@
 
 Agently is a multi-tenant SaaS where people create their own AI agents, give them instructions and private knowledge, and use them from one workspace. See [docs/PRODUCT_VISION.md](docs/PRODUCT_VISION.md) and [docs/MASTER_PRD.md](docs/MASTER_PRD.md). Current progress: [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-> Status: early development (Phase 0 — foundation). Only health checks and an app shell exist so far.
+> Status: early development (Phase 1 — SaaS foundation). Accounts and sign-in work; workspaces and agents do not exist yet.
 
 ## Repository layout
 
@@ -47,10 +47,12 @@ python -m venv .venv
 Copy-Item .env.example .env   # then edit DATABASE_URL
 .venv\Scripts\alembic upgrade head            # create/upgrade the schema
 .venv\Scripts\python -m scripts.seed_dev      # optional: DEVELOPMENT-only demo user + workspace
-.venv\Scripts\uvicorn app.main:app --reload --port 8000
+.venv\Scripts\uvicorn app.main:app --reload --port 8000 --no-proxy-headers
 ```
 
-The seed script creates `demo@agently.local` / `agently-demo-password` (a public dev-only credential), is safe to re-run, and refuses to run when `ENVIRONMENT=production`. Schema and deletion rules: `docs/DATABASE_DESIGN.md`.
+The seed script creates `demo@agently.local` with a random password that it prints once. It is safe to re-run, and refuses to run when `ENVIRONMENT=production` or when `DATABASE_URL` is not a local database. To get a new password, delete that user and its Demo Workspace, then run it again. **Databases seeded before Slice 1.2 still have the old published password**: do this on any you keep.
+
+`--no-proxy-headers` is required: without it uvicorn lets a client choose its own IP address through `X-Forwarded-For`, which bypasses the login and signup limits. Schema and deletion rules: `docs/DATABASE_DESIGN.md`.
 
 macOS/Linux: use `.venv/bin/...` and `cp`.
 
@@ -70,6 +72,19 @@ Open http://localhost:3000. The page shows a **System status** panel that report
 |---|---|
 | `GET /api/health` | Process is up (200 `{"status":"ok"}`) |
 | `GET /api/health/ready` | Dependencies ready: 200 `ready`, or 503 `not_ready` with `checks.database` = `not_configured` / `unavailable` |
+
+## Authentication endpoints
+
+| Endpoint | Result |
+|---|---|
+| `POST /api/auth/register` | 201 and a session cookie. 409 `registration_failed`, 422, or 429 |
+| `POST /api/auth/login` | 200 and a new session cookie. 401 `invalid_credentials`, 422, or 429 |
+| `POST /api/auth/logout` | 204; revokes the session on the server and clears the cookie |
+| `GET /api/auth/me` | The signed-in user, or 401 |
+
+Pages: `/register`, `/login`, `/account`. State-changing requests need an `Origin` header listed in `ALLOWED_ORIGINS` (otherwise 403 `origin_rejected`), so `curl` and the interactive API docs on port 8000 are rejected unless you add that header or origin. Design: `docs/decisions/ADR-0003-session-authentication.md`.
+
+Auth settings are in `backend/.env.example`. If your `backend/.env` is older than Slice 1.2, the defaults work locally; add `SIGNUP_LIMIT_PER_IP=100` and `LOGIN_LIMIT_PER_IP=200` before re-running the browser check often. Production must set `ENVIRONMENT=production` (the default is `development`, which turns off the production checks), `ALLOWED_ORIGINS` and `TRUSTED_PROXY_HOPS`, and run uvicorn with `--no-proxy-headers`.
 
 API docs (non-production): http://localhost:8000/api/docs
 
@@ -95,6 +110,12 @@ npm run typecheck
 npm run build
 ```
 
+Browser check of the auth journey (frontend and backend running, from the repository root; needs the Playwright skill, adds nothing to the frontend):
+
+```powershell
+node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/auth-browser-check.js
+```
+
 ## Shutdown
 
 Stop the dev servers with `Ctrl+C`. Docker database: `docker compose down` (add `-v` only if you want to delete local data).
@@ -108,4 +129,4 @@ Stop the dev servers with `Ctrl+C`. Docker database: `docker compose down` (add 
 
 ## Security
 
-Never commit `.env` files or keys; the repository is public. See `docs/SECURITY.md` (added in Phase 1).
+Never commit `.env` files or keys; the repository is public. Authentication rules: `docs/decisions/ADR-0003-session-authentication.md`. A general `docs/SECURITY.md` is not written yet.

@@ -16,7 +16,8 @@ PostgreSQL 16+ (developed on 18), SQLAlchemy 2.x models, Alembic migrations. Mod
 | `users` | Accounts | `email` unique regardless of case (unique index on `lower(email)`); stored as entered, so lookups must compare `lower(email) = lower(:input)`. `password_hash` is Argon2id (ADR-0003); never the raw password. |
 | `workspaces` | Tenants | `name` required. |
 | `memberships` | A user's role in a workspace | One per `(user_id, workspace_id)`. `role` is `owner` or `member` (check constraint, so adding a role later is a constraint swap, not an enum migration). A user can belong to many workspaces. |
-| `sessions` | Server-side login sessions (ADR-0003) | Stores only `token_hash`, unique and indexed; never the raw token. `expires_at` required, `revoked_at` nullable. |
+| `sessions` | Server-side login sessions (ADR-0003) | Stores only `token_hash`, unique and indexed; never the raw token. `expires_at` required, `revoked_at` nullable (set by logout). |
+| `auth_throttle_events` | Counted login and signup attempts | One row per attempt and limit. `key_hash` is a SHA-256 of the scope plus normalised email and/or IP; no plaintext email. `created_at` is set by the application. Rows older than the longest throttle window are deleted whenever a new attempt is recorded, so the table stays bounded. Not linked to `users`: unknown emails are counted too. |
 
 ## Deletion behaviour (PRD DATA-1)
 

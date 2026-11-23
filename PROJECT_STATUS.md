@@ -1,11 +1,12 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 1 — SaaS foundation (Phase 0 exit gate met)
-**Next smallest task:** Slice 1.2 — authentication (register, login, logout, `/me`, rate limiting) on top of the Slice 1.1 schema
+**Next smallest task:** Slice 1.3 — workspace and membership
 
 ## Blocked / needs owner input
 
 - ~~Slice 1.1 blocked on local PostgreSQL credentials~~ — resolved 2026-11-21: `GET /api/health/ready` returns `database: ok`.
+- **Owner decision:** should `ENVIRONMENT` default to `production`? It defaults to `development`, so a deployment that forgets it gets no production safety checks (see Slice 1.2).
 - **Known gap (owner: Slice 1.3):** Slice 1.1 hard-deletes users with cascades, so deleting a user's account can leave a workspace with no owner. Slice 1.3 must add the rule "the last owner cannot leave the workspace or delete their account" (or transfer/delete the workspace first), with tests.
 - Later (Phase 2.3 / 3.1): a real model-provider API key is needed for real-provider smoke tests. Until then those tests are BLOCKED and a mock provider is used.
 
@@ -101,3 +102,41 @@
 - **Independent review (after commit):** 7 Claude reviewer subagents, no external model; verdict "Ready with fixes", no P0/P1. Follow-up fix `92f0b86`: a `?dbname=` query parameter in `DATABASE_URL` could point test engines at the dev database. Learnings: `docs/solutions/` (`1ff8e1e`). The open P2/P3 items (concurrent-run name collisions, a fully skipped run exits 0, no host check) are listed in `docs/solutions/best-practices/guarded-self-managing-test-databases.md`.
 - **Next smallest task:** Slice 1.2 — authentication
 
+### Slice 1.2 — Authentication
+- **Date:** 2026-11-23
+- **What changed:** Register, login, logout and `GET /api/auth/me` with revocable cookie sessions (Argon2id passwords, hash-only tokens, 14-day absolute lifetime). Strict Origin check on every state-changing request. Login and signup throttling in PostgreSQL (bounded, hashed keys; per IP, per account-and-IP pair, and a higher per-account ceiling). Auth event log without secrets. Route inventory test that fails for any unprotected new route. Minimal `/register`, `/login` and `/account` pages. Seed script: random password, local databases only. `ROLES` is now the source of the role check constraint. SQL error logs no longer include parameters; request bodies are limited to 64 KB.
+- **Plan:** `docs/plans/2026-11-21-1428-feat-authentication-plan.md`
+- **Files/modules affected:** `backend/app/core/`, `backend/app/modules/identity/`, `backend/migrations/versions/0002_auth_throttle_events.py`, `backend/scripts/seed_dev.py`, `backend/tests/`, `frontend/src/features/auth/`, `frontend/src/app/{register,login,account}/`, `docs/manual-checks/auth-browser-check.js`, ADR-0003, `docs/SYSTEM_ARCHITECTURE.md`, `docs/DATABASE_DESIGN.md`, `README.md`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (187) | `backend: .venv\Scripts\python -m pytest` | |
+| Backend tests without DB | PASS (97) + SKIPPED (90) | `DATABASE_URL= .venv/Scripts/python -m pytest` (Git Bash) | Skips are loud and not counted as passes |
+| Backend lint/format | PASS | `ruff check .` / `ruff format --check .` | |
+| Test sensitivity | PASS (10 of 10 caught) | temporarily broke one guard at a time | Origin, IP count reset, commit before count, cleanup, throttled-row removal, revocation, expiry, missing commits, unprotected `/me` |
+| Migrations on dev DB | PASS | `alembic upgrade head`, `check`, `downgrade -1`, `upgrade head` | `check` does not compare check constraints; a unit test pins the role constraint text |
+| Frontend | PASS (21) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
+| Browser check through the real proxy | PASS (21) | see below | Exits 1 with the backend stopped, and with uvicorn's default proxy handling |
+| Seed script on dev DB | PASS (no-op only) | `python -m scripts.seed_dev` | The demo user already existed; the create path is covered by tests |
+
+- **Re-run the browser check** (repository root; backend with `--no-proxy-headers`, frontend running; `SIGNUP_LIMIT_PER_IP=100` and `LOGIN_LIMIT_PER_IP=200` in `backend/.env`):
+
+  ```powershell
+  node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/auth-browser-check.js
+  ```
+
+- **Public routes (audit 2.1):** `GET /api/health`, `GET /api/health/ready`, `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`; outside production also `GET /api/docs`, `GET /api/openapi.json`, `GET /docs/oauth2-redirect`. Private: `GET /api/auth/me`.
+- **Audit notes:** 2.3 not applicable (no email service); 2.7 not applicable (no OAuth provider); 6.1 client-IP source **Suspected** until a hosting target is chosen.
+- **Review:** plan reviewed by six Claude reviewers. Code reviewed twice: first by two independent Claude reviewers, then, after those fixes, by the eleven `ce-code-review` reviewers (no P0/P1; no other-model reviewer was available). The implementing agent merged those findings itself instead of using the separate merge, validator and report steps. The simplify pass was not run. Fixed from review: uvicorn rewrote the client IP from `X-Forwarded-For` (real throttle bypass, reproduced in the browser check), SQL errors logged hashes, a lone-surrogate password returned 500, unlimited request bodies, IPv6 rotation, throttled attempts briefly counting against the account, a delete-order deadlock, seed host bypasses, and weak tests.
+- **Known limitations / follow-ups:**
+  - Databases seeded before this slice, including the local dev database, still hold the demo user with the old published password. Delete that user and its Demo Workspace, then re-seed.
+  - `ENVIRONMENT` defaults to `development`, so a deployment that forgets it gets no production checks. Owner decision: default to `production`?
+  - With Next.js as the only proxy, all users share one IP bucket (20 failed logins per 15 minutes, 5 signups per hour for everyone). Production needs an edge proxy that appends to `X-Forwarded-For`.
+  - An attacker with several IPs can still reach the per-account ceiling of 50 and block that account's login while the attack lasts (accepted).
+  - Not done: expired-session cleanup and a cap on active sessions, 503 instead of 500 on database outage in auth routes, the standard error format on a 413 (oversized body), a cap on concurrent password hashing (64 MiB each, up to 40 threads), a `__Host-` cookie name in production, CAPTCHA on signup (6.3), refusing a localhost `ALLOWED_ORIGINS` in production.
+  - Emails are limited to printable ASCII.
+  - The browser check leaves throwaway `browser-check-*@example.com` users in the dev database.
+- **Not green:** gstack `/verify` could not run the backend tests on this machine: it calls `python3`, which is the Windows Store alias (`Python was not found`, exit 49). Its frontend lane passed. The same backend suite passes when run directly (table above).
+- **Commit / push:** `db4c4ae` (backend), `3070b54` (frontend and browser check) — pushed to `origin/main`; the docs commit follows.
+- **Next smallest task:** Slice 1.3 — workspace and membership

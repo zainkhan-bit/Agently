@@ -33,7 +33,7 @@ Each requirement is testable. IDs are referenced from tests and `PROJECT_STATUS.
 ### Authentication (AUTH)
 - **AUTH-1** Register with email + password. *AC:* valid input creates an account and a session; password is stored only as a strong hash; duplicate email returns a generic error that does not confirm the account exists beyond what registration inherently implies.
 - **AUTH-2** Sign in / sign out. *AC:* wrong password and unknown email return the same error; sign-out invalidates the session server-side.
-- **AUTH-3** Session retrieval. *AC:* `GET /me` returns the user for a valid session, 401 for missing/expired/revoked sessions.
+- **AUTH-3** Session retrieval. *AC:* `GET /api/auth/me` returns the user for a valid session, 401 for missing/expired/revoked sessions.
 - **AUTH-4** Rate limiting. *AC:* repeated failed sign-ins from one IP/email are throttled with 429.
 
 ### Workspaces (WS)
