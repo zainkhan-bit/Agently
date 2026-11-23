@@ -1,0 +1,40 @@
+{
+  "runner": "python scripts/run_tests.py {files}",
+  "dependencies": {
+    "backend/**": [
+      "backend/tests/test_auth_api.py",
+      "backend/tests/test_auth_logging.py",
+      "backend/tests/test_auth_settings.py",
+      "backend/tests/test_auth_throttling.py",
+      "backend/tests/test_client_ip.py",
+      "backend/tests/test_db_guard.py",
+      "backend/tests/test_db_session.py",
+      "backend/tests/test_health.py",
+      "backend/tests/test_migrations.py",
+      "backend/tests/test_origin_guard.py",
+      "backend/tests/test_route_inventory.py",
+      "backend/tests/test_run_tests_script.py",
+      "backend/tests/test_schema_constraints.py",
+      "backend/tests/test_seed_dev.py",
+      "backend/tests/test_skip_summary.py",
+      "backend/tests/test_tenant_isolation.py",
+      "backend/tests/test_throttle.py",
+      "backend/tests/test_workspace_concurrency.py",
+      "backend/tests/test_workspaces_api.py"
+    ],
+    "frontend/**": [
+      "frontend/src/features/auth/AccountView.test.tsx",
+      "frontend/src/features/auth/AuthForm.test.tsx",
+      "frontend/src/features/system/ServiceStatus.test.tsx",
+      "frontend/src/features/workspaces/workspaces.test.tsx"
+    ],
+    "scripts/run_tests.py": [
+      "backend/tests/test_run_tests_script.py"
+    ],
+    ".gstack/pregate.json": [
+      "backend/tests/test_run_tests_script.py"
+    ],
+    "docs/manual-checks/**": [],
+    ".gitignore": []
+  }
+}
