@@ -134,7 +134,7 @@
 - **Audit notes:** 2.3 not applicable (no email service); 2.7 not applicable (no OAuth provider); 6.1 client-IP source **Suspected** until a hosting target is chosen.
 - **Review:** plan reviewed by six Claude reviewers. Code reviewed twice: first by two independent Claude reviewers, then, after those fixes, by the eleven `ce-code-review` reviewers (no P0/P1; no other-model reviewer was available). The implementing agent merged those findings itself instead of using the separate merge, validator and report steps. The simplify pass was not run. Fixed from review: uvicorn rewrote the client IP from `X-Forwarded-For` (real throttle bypass, reproduced in the browser check), SQL errors logged hashes, a lone-surrogate password returned 500, unlimited request bodies, IPv6 rotation, throttled attempts briefly counting against the account, a delete-order deadlock, seed host bypasses, and weak tests.
 - **Known limitations / follow-ups:**
-  - Databases seeded before this slice, including the local dev database, still hold the demo user with the old published password. Delete that user and its Demo Workspace, then re-seed.
+  - Databases seeded before this slice still hold the demo user with the old published password. Delete that user and its Demo Workspace, then re-seed. Done for the local dev database on 2026-11-23.
   - `ENVIRONMENT` defaults to `development`, so a deployment that forgets it gets no production checks. Owner decision: default to `production`?
   - With Next.js as the only proxy, all users share one IP bucket (20 failed logins per 15 minutes, 5 signups per hour for everyone). Production needs an edge proxy that appends to `X-Forwarded-For`.
   - An attacker with several IPs can still reach the per-account ceiling of 50 and block that account's login while the attack lasts (accepted).
@@ -160,18 +160,18 @@
 
 | Check | Result | Command | Notes |
 |---|---|---|---|
-| Backend tests with real DB | PASS (284) | `backend: .venv\Scripts\python -m pytest` | Concurrency file repeated without a failure |
-| Backend tests without DB | PASS (107) + SKIPPED (177) | `DATABASE_URL= .venv/Scripts/python -m pytest` (Git Bash) | |
+| Backend tests with real DB | PASS (292) | `backend: .venv\Scripts\python -m pytest` | Concurrency file repeated without a failure |
+| Backend tests without DB | PASS (115) + SKIPPED (177) | `DATABASE_URL= .venv/Scripts/python -m pytest` (Git Bash) | |
 | Lint, format, `alembic check` | PASS | `ruff check .`, `ruff format --check .`, `alembic check` | No migration needed |
 | Test sensitivity | PASS | removed one guard or lock at a time | Both locks, re-check under lock, limit lock, refresh order, membership filters, unguarded route: all caught. Removing only the route-level owner check changes nothing, because the service re-checks under the lock |
-| Frontend | PASS (35) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
+| Frontend | PASS (38) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
 | Browser checks through the real proxy | PASS (14 + 21) | commands in `README.md` | Workspace and auth journeys |
 
-- **Review:** two Claude reviewers (tenant isolation and access control; data and concurrency). No P0/P1. Fixed: matrix recognised routes by path spelling, no foreign-object matrix, a rename could return 500 after succeeding, a narrow deadlock (the workspace row is now locked before the owner rows), a race test that could pass without the race, and invisible or misleading names. The fixes were tested but not re-reviewed.
+- **Review:** two Claude reviewers (tenant isolation and access control; data and concurrency). No P0/P1. Fixed: matrix recognised routes by path spelling, no foreign-object matrix, a rename could return 500 after succeeding, a narrow deadlock (the workspace row is now locked before the owner rows), a race test that could pass without the race, and invisible or misleading names. Then an owner-run ultrareview of the fixed code: two nits, both confirmed and fixed (a session ending, or the workspace disappearing, during create or delete; duplicated button and error markup). Those last fixes were tested but not re-reviewed.
 - **Known limitations / follow-ups:**
   - Promoting a member who already owns 20 workspaces fails with `workspace_limit`, which tells the owner that fact. Unreachable until people can join a workspace.
   - Someone removed at the same moment as they request the member list can receive it one last time.
   - Accounts from before this slice have no workspace until they create one.
-- **Not green:** gstack `/verify` cannot run the backend tests on this machine (`python3` is the Windows Store alias, exit 49). The same suite passes when run directly.
-- **Commit / push:** `8d9e0fc` (backend), `bb657cd` (frontend and browser check), docs commit follows. **Not pushed:** waiting for the owner's decision on `/ultrareview`.
+- **`/verify`:** runs on Windows now. `.gstack/pregate.json` points it at `scripts/run_tests.py`, which uses `backend/.venv` and runs each suite from its own folder. gstack reads that file from `origin/main`, so it applies once pushed. A test fails when a test file is missing from its mapping: add new test files there.
+- **Commit / push:** `8d9e0fc` (backend), `bb657cd` (frontend and browser check), `4591457` (docs); review fixes and tooling follow. Pushed to `origin/main` together.
 - **Next smallest task:** Slice 1.4 — dashboard shell
