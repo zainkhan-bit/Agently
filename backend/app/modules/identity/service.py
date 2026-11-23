@@ -13,6 +13,7 @@ from app.core.errors import AuthenticationError, ConflictError, RateLimitError
 from app.modules.identity import events, passwords, sessions, throttle
 from app.modules.identity.events import RequestInfo
 from app.modules.identity.models import User
+from app.modules.workspaces import service as workspaces
 
 
 class InvalidCredentialsError(AuthenticationError):
@@ -30,7 +31,7 @@ def _find_user(db: Session, email: str) -> User | None:
 
 
 def register(db: Session, email: str, password: str, info: RequestInfo) -> tuple[User, str]:
-    """Create an account and its first session. Returns the user and the raw session token."""
+    """Create an account, its personal workspace and first session. Returns user and raw token."""
     if throttle.record_attempt(db, throttle.signup_limits(info.ip)) is None:
         events.log("signup_throttled", info)
         raise RateLimitError()
@@ -43,6 +44,7 @@ def register(db: Session, email: str, password: str, info: RequestInfo) -> tuple
     except IntegrityError as exc:  # a concurrent registration won the unique index
         db.rollback()
         raise RegistrationFailedError() from exc
+    workspaces.add_workspace(db, user.id, workspaces.PERSONAL_WORKSPACE_NAME)
     token = sessions.create_session(db, user)
     db.commit()
     events.log("register", info, user.id)
