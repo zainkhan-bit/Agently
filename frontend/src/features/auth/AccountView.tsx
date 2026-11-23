@@ -4,14 +4,14 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { buttonClass } from "@/components/buttonClass";
+import { ErrorRetry } from "@/components/ErrorRetry";
 import { ApiError, apiFetch, apiPost, errorMessage } from "@/lib/api";
 
 type State =
   | { kind: "loading" }
   | { kind: "signedIn"; email: string }
   | { kind: "error"; message: string };
-
-const BUTTON = "self-start rounded-md border border-current px-3 py-2 font-medium";
 
 export function AccountView() {
   const router = useRouter();
@@ -49,14 +49,7 @@ export function AccountView() {
 
   if (state.kind === "loading") return <p>Checking your session…</p>;
   if (state.kind === "error") {
-    return (
-      <div className="flex flex-col gap-4">
-        <p role="alert">{state.message}</p>
-        <button type="button" onClick={() => void load()} className={BUTTON}>
-          Retry
-        </button>
-      </div>
-    );
+    return <ErrorRetry message={state.message} onRetry={() => void load()} />;
   }
   return (
     <div className="flex flex-col gap-4">
@@ -70,7 +63,7 @@ export function AccountView() {
         type="button"
         disabled={pending}
         onClick={() => void signOut()}
-        className={`${BUTTON} disabled:opacity-60`}
+        className={buttonClass}
       >
         Sign out
       </button>

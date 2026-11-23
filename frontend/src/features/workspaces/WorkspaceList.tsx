@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { buttonClass } from "@/components/buttonClass";
+import { ErrorRetry } from "@/components/ErrorRetry";
 import { ApiError, apiFetch, apiPost, errorMessage, fieldErrors } from "@/lib/api";
 
 import type { Workspace } from "./types";
@@ -12,8 +14,6 @@ type State =
   | { kind: "loading" }
   | { kind: "ready"; workspaces: Workspace[] }
   | { kind: "error"; message: string };
-
-const BUTTON = "self-start rounded-md border border-current px-3 py-2 font-medium disabled:opacity-60";
 
 export function WorkspaceList() {
   const router = useRouter();
@@ -48,7 +48,10 @@ export function WorkspaceList() {
       const { data } = await apiPost<Workspace>("/workspaces", { name });
       router.push(`/workspaces/${data.id}`);
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401) router.replace("/login");
+      if (error instanceof ApiError && error.status === 401) {
+        router.replace("/login");
+        return;
+      }
       setNameError(fieldErrors(error).name ?? errorMessage(error));
       inFlight.current = false;
       setPending(false);
@@ -57,14 +60,7 @@ export function WorkspaceList() {
 
   if (state.kind === "loading") return <p>Loading workspaces…</p>;
   if (state.kind === "error") {
-    return (
-      <div className="flex flex-col gap-4">
-        <p role="alert">{state.message}</p>
-        <button type="button" onClick={() => void load()} className={BUTTON}>
-          Retry
-        </button>
-      </div>
-    );
+    return <ErrorRetry message={state.message} onRetry={() => void load()} />;
   }
   const empty = state.workspaces.length === 0;
   return (
@@ -100,7 +96,7 @@ export function WorkspaceList() {
             {nameError}
           </p>
         )}
-        <button type="submit" disabled={pending} className={BUTTON}>
+        <button type="submit" disabled={pending} className={buttonClass}>
           {pending ? "Creating…" : "Create workspace"}
         </button>
       </form>

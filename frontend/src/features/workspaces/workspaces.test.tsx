@@ -85,6 +85,15 @@ describe("WorkspaceList", () => {
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
   });
 
+  it("only goes to login when the session ends before creating", async () => {
+    routes["POST /api/workspaces"] = () => fail(401, "authentication_required", "Sign in.");
+    render(<WorkspaceList />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create workspace" }));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByRole("button", { name: "Creating…" })).toBeDisabled();
+  });
+
   it("offers a retry when the server is unreachable", async () => {
     routes["GET /api/workspaces"] = () => Promise.reject(new TypeError("down"));
     render(<WorkspaceList />);
@@ -138,6 +147,26 @@ describe("WorkspaceView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("No permission.");
     expect(router.replace).not.toHaveBeenCalled();
+  });
+
+  async function tryToDelete() {
+    render(<WorkspaceView id="w1" />);
+    const input = await screen.findByLabelText("Workspace name");
+    fireEvent.change(input, { target: { value: "Team" } });
+    fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
+  }
+
+  it("only goes to login when the session ends before deleting", async () => {
+    routes["DELETE /api/workspaces/w1"] = () => fail(401, "authentication_required", "Sign in.");
+    await tryToDelete();
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/login"));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("shows not found when the workspace is already gone", async () => {
+    routes["DELETE /api/workspaces/w1"] = () => fail(404, "not_found", "x");
+    await tryToDelete();
+    expect(await screen.findByText("Workspace not found")).toBeInTheDocument();
   });
 
   it("offers no delete to a member", async () => {

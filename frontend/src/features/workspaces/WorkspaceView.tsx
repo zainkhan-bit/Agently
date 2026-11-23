@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { buttonClass } from "@/components/buttonClass";
+import { ErrorRetry } from "@/components/ErrorRetry";
 import { ApiError, apiFetch, errorMessage } from "@/lib/api";
 
 import type { Member, Workspace } from "./types";
@@ -13,8 +15,6 @@ type State =
   | { kind: "ready"; workspace: Workspace; members: Member[] }
   | { kind: "missing" }
   | { kind: "error"; message: string };
-
-const BUTTON = "self-start rounded-md border border-current px-3 py-2 font-medium disabled:opacity-60";
 
 export function WorkspaceView({ id }: { id: string }) {
   const router = useRouter();
@@ -52,8 +52,13 @@ export function WorkspaceView({ id }: { id: string }) {
       await apiFetch(path, { method: "DELETE" });
       router.replace("/workspaces");
     } catch (error) {
-      setDeleteError(errorMessage(error));
-      setPending(false);
+      const status = error instanceof ApiError ? error.status : 0;
+      if (status === 401) router.replace("/login");
+      else if (status === 404) setState({ kind: "missing" }); // deleted, or no longer a member
+      else {
+        setDeleteError(errorMessage(error));
+        setPending(false);
+      }
     }
   }
 
@@ -73,14 +78,7 @@ export function WorkspaceView({ id }: { id: string }) {
     );
   }
   if (state.kind === "error") {
-    return (
-      <div className="flex flex-col gap-4">
-        <p role="alert">{state.message}</p>
-        <button type="button" onClick={() => void load()} className={BUTTON}>
-          Retry
-        </button>
-      </div>
-    );
+    return <ErrorRetry message={state.message} onRetry={() => void load()} />;
   }
   const { workspace, members } = state;
   return (
@@ -120,7 +118,7 @@ export function WorkspaceView({ id }: { id: string }) {
             type="button"
             disabled={pending || typedName !== workspace.name}
             onClick={() => void remove()}
-            className={BUTTON}
+            className={buttonClass}
           >
             Delete permanently
           </button>
