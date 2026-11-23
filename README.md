@@ -4,7 +4,7 @@
 
 Agently is a multi-tenant SaaS where people create their own AI agents, give them instructions and private knowledge, and use them from one workspace. See [docs/PRODUCT_VISION.md](docs/PRODUCT_VISION.md) and [docs/MASTER_PRD.md](docs/MASTER_PRD.md). Current progress: [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-> Status: early development (Phase 1 — SaaS foundation). Accounts and sign-in work; workspaces and agents do not exist yet.
+> Status: early development (Phase 1 — SaaS foundation). Accounts and workspaces work; agents do not exist yet.
 
 ## Repository layout
 
@@ -86,6 +86,19 @@ Pages: `/register`, `/login`, `/account`. State-changing requests need an `Origi
 
 Auth settings are in `backend/.env.example`. If your `backend/.env` is older than Slice 1.2, the defaults work locally; add `SIGNUP_LIMIT_PER_IP=100` and `LOGIN_LIMIT_PER_IP=200` before re-running the browser check often. Production must set `ENVIRONMENT=production` (the default is `development`, which turns off the production checks), `ALLOWED_ORIGINS` and `TRUSTED_PROXY_HOPS`, and run uvicorn with `--no-proxy-headers`.
 
+## Workspace endpoints
+
+| Endpoint | Who | Result |
+|---|---|---|
+| `GET`, `POST /api/workspaces` | signed in | List your workspaces; create one (at most 20 owned) |
+| `GET /api/workspaces/{id}` | member | Name and your role |
+| `PATCH`, `DELETE /api/workspaces/{id}` | owner | Rename; delete permanently |
+| `POST /api/workspaces/{id}/leave` | member | Leave (not the last owner) |
+| `GET /api/workspaces/{id}/members` | member | List members |
+| `PATCH`, `DELETE /api/workspaces/{id}/members/{user_id}` | owner | Change role; remove |
+
+Non-members get 404, members without the owner role get 403, and breaking the last-owner or 20-workspace rule gets 409. Registration creates a personal workspace. People cannot be invited yet. Pages: `/workspaces`, `/workspaces/<id>`.
+
 API docs (non-production): http://localhost:8000/api/docs
 
 ## Tests and checks
@@ -110,10 +123,11 @@ npm run typecheck
 npm run build
 ```
 
-Browser check of the auth journey (frontend and backend running, from the repository root; needs the Playwright skill, adds nothing to the frontend):
+Browser checks of the auth and workspace journeys (frontend and backend running, from the repository root; needs the Playwright skill, adds nothing to the frontend):
 
 ```powershell
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/auth-browser-check.js
+node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/workspace-browser-check.js
 ```
 
 ## Shutdown

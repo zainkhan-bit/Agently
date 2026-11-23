@@ -47,7 +47,7 @@ Routes authenticate, validate, and call a service. Services own business rules a
 ## 4. Request flow and tenant scoping
 
 1. Session cookie → `current_user` dependency (DB lookup of hashed session token, expiry check).
-2. Workspace-scoped routes take `workspace_id` in the path; a `workspace_context` dependency resolves the membership for `(current_user, workspace_id)`; absence → 404.
+2. Workspace-scoped routes take `workspace_id` in the path; a `workspace_context` dependency (`get_workspace_context`, `app/modules/workspaces/dependencies.py`) resolves the membership for `(current_user, workspace_id)`; absence → 404, the same as for a workspace that does not exist. `tests/test_tenant_isolation.py` fails for any route that neither uses it nor is on an explicit allowlist. Members get 403 for owner-only actions. The current workspace is the id in the URL; nothing is stored in the session.
 3. Services receive the resolved context and filter every query by `workspace_id`.
 4. Role checks use a server-side role→permission map.
 

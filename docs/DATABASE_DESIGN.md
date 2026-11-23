@@ -26,7 +26,9 @@ Deletion is a **hard delete**. Rows are removed immediately: there are no `delet
 - Deleting a **workspace** deletes its memberships. Its users remain.
 - Deleting a **user** deletes their sessions and memberships. The workspaces they belonged to remain.
 
-**Known gap (Slice 1.3):** deleting the account of a workspace's last owner leaves that workspace with no owner. Slice 1.3 must prevent the last owner from leaving the workspace or deleting their account. Until then, avoid that operation.
+**Last owner:** leaving, removing or demoting a workspace's last owner is refused. The service locks the workspace row and then its owner memberships (`SELECT … FOR UPDATE`) and decides from the locked rows, so simultaneous requests cannot leave it without an owner. A person owns at most 20 workspaces; that check locks the user's row first.
+
+**Known gap:** account deletion does not exist in the app yet. Deleting a user directly in the database still cascades and can leave a workspace with no owner. The slice that adds account deletion must apply the last-owner rule, lock in the same order (workspace, memberships, then user), and handle a create or promotion waiting on the deleted user.
 
 Later tables (agents, conversations, memories, knowledge sources) will document their deletion behaviour here when they are added.
 

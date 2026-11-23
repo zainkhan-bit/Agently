@@ -1,13 +1,17 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 1 — SaaS foundation (Phase 0 exit gate met)
-**Next smallest task:** Slice 1.3 — workspace and membership
+**Next smallest task:** Slice 1.4 — dashboard shell
+
+## Must fix before any deployment
+
+- **`ENVIRONMENT` defaults to `development`.** If it is unset in production, the Secure cookie guard and every other production check are skipped. Owner decision: default to `production`?
+- Run uvicorn with `--no-proxy-headers`, and put an edge proxy that appends to `X-Forwarded-For` in front (see Slice 1.2).
 
 ## Blocked / needs owner input
 
 - ~~Slice 1.1 blocked on local PostgreSQL credentials~~ — resolved 2026-11-21: `GET /api/health/ready` returns `database: ok`.
-- **Owner decision:** should `ENVIRONMENT` default to `production`? It defaults to `development`, so a deployment that forgets it gets no production safety checks (see Slice 1.2).
-- **Known gap (owner: Slice 1.3):** Slice 1.1 hard-deletes users with cascades, so deleting a user's account can leave a workspace with no owner. Slice 1.3 must add the rule "the last owner cannot leave the workspace or delete their account" (or transfer/delete the workspace first), with tests.
+- **Known gap (owner: the slice that adds account deletion):** it must refuse to delete a workspace's last owner, or transfer or delete the workspace first, with tests. Slice 1.3 enforces this for leaving, removal and demotion; account deletion does not exist in the app yet. Lock order and edge cases: `docs/DATABASE_DESIGN.md`.
 - Later (Phase 2.3 / 3.1): a real model-provider API key is needed for real-provider smoke tests. Until then those tests are BLOCKED and a mock provider is used.
 
 ## Slice log
@@ -140,3 +144,34 @@
 - **Not green:** gstack `/verify` could not run the backend tests on this machine: it calls `python3`, which is the Windows Store alias (`Python was not found`, exit 49). Its frontend lane passed. The same backend suite passes when run directly (table above).
 - **Commit / push:** `db4c4ae` (backend), `3070b54` (frontend and browser check) — pushed to `origin/main`; the docs commit follows.
 - **Next smallest task:** Slice 1.3 — workspace and membership
+
+### Slice 1.3 — Workspaces and membership
+- **Date:** 2026-11-23
+- **What changed:** Registration creates a personal workspace in the same transaction. Create, list, open, rename and delete workspaces; list members, change roles, remove members, leave. Non-members get 404, members without the owner role get 403. The last owner is protected by row locks, and a person owns at most 20 workspaces. Pages `/workspaces` and `/workspaces/<id>`. No schema change. People cannot be invited yet (owner decision).
+- **Plan:** `docs/plans/2026-11-23-1215-feat-workspaces-and-membership-plan.md`
+- **Files/modules affected:** `backend/app/modules/workspaces/`, `backend/app/modules/identity/service.py`, `backend/tests/test_{workspaces_api,tenant_isolation,workspace_concurrency}.py`, `frontend/src/features/workspaces/`, `frontend/src/app/workspaces/`, `docs/manual-checks/workspace-browser-check.js`
+- **Phase 1 exit-gate proof — tenant isolation matrix:** `backend/tests/test_tenant_isolation.py`, generated from the registered routes:
+  - `test_every_route_uses_the_membership_check_or_is_allowlisted`: any new route must use the check or be allowlisted on purpose, whatever its path.
+  - `test_outsider_gets_404_and_no_data`: every verb of every workspace and member endpoint, as another signed-in user. 404, no data, nothing changed in any table except the throttle log.
+  - `test_own_workspace_does_not_open_another_tenants_objects`: own workspace id with another tenant's object id.
+  - Also: 404 before body validation, 401 when signed out, 405 for other verbs, and lists never show another tenant.
+- **Race proof:** `backend/tests/test_workspace_concurrency.py`. Separate connections; each race waits until PostgreSQL reports the requests blocked.
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (284) | `backend: .venv\Scripts\python -m pytest` | Concurrency file repeated without a failure |
+| Backend tests without DB | PASS (107) + SKIPPED (177) | `DATABASE_URL= .venv/Scripts/python -m pytest` (Git Bash) | |
+| Lint, format, `alembic check` | PASS | `ruff check .`, `ruff format --check .`, `alembic check` | No migration needed |
+| Test sensitivity | PASS | removed one guard or lock at a time | Both locks, re-check under lock, limit lock, refresh order, membership filters, unguarded route: all caught. Removing only the route-level owner check changes nothing, because the service re-checks under the lock |
+| Frontend | PASS (35) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
+| Browser checks through the real proxy | PASS (14 + 21) | commands in `README.md` | Workspace and auth journeys |
+
+- **Review:** two Claude reviewers (tenant isolation and access control; data and concurrency). No P0/P1. Fixed: matrix recognised routes by path spelling, no foreign-object matrix, a rename could return 500 after succeeding, a narrow deadlock (the workspace row is now locked before the owner rows), a race test that could pass without the race, and invisible or misleading names. The fixes were tested but not re-reviewed.
+- **Known limitations / follow-ups:**
+  - Promoting a member who already owns 20 workspaces fails with `workspace_limit`, which tells the owner that fact. Unreachable until people can join a workspace.
+  - Someone removed at the same moment as they request the member list can receive it one last time.
+  - Accounts from before this slice have no workspace until they create one.
+- **Not green:** gstack `/verify` cannot run the backend tests on this machine (`python3` is the Windows Store alias, exit 49). The same suite passes when run directly.
+- **Commit / push:** `8d9e0fc` (backend), `bb657cd` (frontend and browser check), docs commit follows. **Not pushed:** waiting for the owner's decision on `/ultrareview`.
+- **Next smallest task:** Slice 1.4 — dashboard shell
