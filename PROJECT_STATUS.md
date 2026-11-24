@@ -1,7 +1,7 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 2 — Agent creation and configuration (Phase 1 exit gate met)
-**Next smallest task:** Slice 2.1 — agent data model and APIs
+**Next smallest task:** Slice 2.2 — My Agents interface
 
 ## Must fix before any deployment
 
@@ -242,3 +242,28 @@ Known gaps to fix or accept:
 - **Proof:** reproduced on PostgreSQL 18.6 with a real autovacuum worker: FORCE fails with the same error as before, the new drop succeeds. `backend/tests/test_db_drop.py` covers the filter; removing any of its four conditions fails the test.
 - **Tests run / results:** backend 316 pass, twice; without a database 133 pass and 183 SKIPPED; `ruff` clean.
 - **Next smallest task:** Slice 2.1 — agent data model and APIs (not started, waiting for the owner)
+
+### Slice 2.1 — Agent data model and APIs
+- **Date:** 2026-11-24
+- **What changed:** Agents and immutable configuration versions (migration `0003`). List, view, create, edit, duplicate, pause, resume, archive and restore for any member; permanent delete for owners only. Edits state the version they started from (409 when outdated); a save that changes nothing makes no version. Limits: 50 agents per workspace (archived included) and 60 create/edit/duplicate requests per user per 10 minutes, both configurable; 200 versions per agent. One rule decides whether an agent may run. The model reference exists but stays empty until 3.1.
+- **Plan and ADR:** `docs/plans/2026-11-24-1020-feat-agent-data-model-and-apis-plan.md`, `docs/decisions/ADR-0005-agent-deletion.md`. The ADR changes the PRD (owner-only delete) and records the conversation/execution cascade for Slice 3.2 and that usage rows survive deletion of agents, executions and workspaces.
+- **Isolation:** every agent route uses the membership check and joined the matrix automatically; until a real agent was supplied for the attacks, every route with an agent id failed the suite. New for all routes: the rightful owner must not get 404, someone in two workspaces cannot cross them, one path parameter is attacked at a time, and reads of your own workspace may not show another's data.
+- **Files/modules affected:** `backend/app/modules/agents/`, `backend/app/core/{text,config}.py`, `backend/app/modules/{workspaces,identity}/`, `backend/migrations/versions/0003_agents.py`, `backend/tests/`, `.gstack/pregate.json`, `docs/`, `README.md`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (526) | `backend: .venv\Scripts\python -m pytest` | No skips |
+| Backend tests without DB | PASS (133) + SKIPPED (379) | `DATABASE_URL= .venv/Scripts/python -m pytest` (Git Bash) | Run before the review fixes |
+| Lint and format | PASS | `ruff check .`, `ruff format --check .` | |
+| Migrations on dev DB | PASS | `alembic upgrade head`, `check`, `downgrade -1`, `upgrade head`, `check` | |
+| Test sensitivity | 23 of 25 caught | broke one guard at a time | The two others, the early owner check on delete removed or reordered, are covered by a second layer, so nothing observable changes. 24 ran before the review fixes, the lock-release one after |
+
+- **Review:** one focused Claude reviewer (security and concurrency), no external model. No P0/P1. Fixed: an unchanged edit kept its locks until the response was sent (P2); matrix loopholes for future collection and nested routes (P2); two test gaps (P3). Recorded: account deletion must lock workspaces first (`docs/DATABASE_DESIGN.md`).
+- **Known limitations:**
+  - AGT-3's chat error waits for Phase 3; only the run rule exists.
+  - Bodies that are not JSON get 422 before any check and are not counted by the write limit. Requests refused with 404 are not counted either.
+  - Agent writes take turns within a workspace, and there is no lock timeout.
+  - No screens, no version history or rollback, no model choice.
+- **Commit / push:** `feat(agents)` commit of 2026-11-24, pushed to `origin/main`.
+- **Next smallest task:** Slice 2.2 — My Agents interface

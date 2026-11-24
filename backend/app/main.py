@@ -9,6 +9,7 @@ from app.core.errors import register_error_handlers
 from app.core.origin_guard import OriginGuardMiddleware
 from app.core.request_id import RequestIdMiddleware
 from app.modules import health
+from app.modules.agents import router as agents
 from app.modules.identity import router as identity
 from app.modules.workspaces import router as workspaces
 
@@ -36,6 +37,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/api")
     app.include_router(identity.router, prefix="/api")
     app.include_router(workspaces.router, prefix="/api")
+    app.include_router(agents.router, prefix="/api")
     return app
 
 

@@ -2,6 +2,8 @@
   "runner": "python scripts/run_tests.py {files}",
   "dependencies": {
     "backend/**": [
+      "backend/tests/test_agent_concurrency.py",
+      "backend/tests/test_agents_api.py",
       "backend/tests/test_auth_api.py",
       "backend/tests/test_auth_logging.py",
       "backend/tests/test_auth_settings.py",

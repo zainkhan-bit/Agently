@@ -1,5 +1,7 @@
 """Throttle storage: sliding windows, hashed keys, bounded size."""
 
+import uuid
+
 import pytest
 from sqlalchemy import func, select
 
@@ -53,6 +55,27 @@ def test_rows_older_than_the_longest_window_are_deleted(db_session, advance) -> 
     advance(minutes=60)
     throttle.record_attempt(db_session, throttle.signup_limits(IP))
     assert rows(db_session) == 2
+
+
+def test_agent_writes_are_counted_per_user(db_session, advance, configure) -> None:
+    configure(agent_write_limit=60)
+    limits = throttle.agent_write_limits(uuid.uuid4())
+    for _ in range(60):
+        assert throttle.record_attempt(db_session, limits) is not None
+    assert throttle.record_attempt(db_session, limits) is None
+    other = throttle.agent_write_limits(uuid.uuid4())
+    assert throttle.record_attempt(db_session, other) is not None
+    advance(minutes=10)
+    assert throttle.record_attempt(db_session, limits) is not None
+
+
+def test_cleanup_keeps_rows_inside_a_longer_agent_window(db_session, advance, configure) -> None:
+    configure(agent_write_limit=1, agent_write_window_minutes=180)
+    limits = throttle.agent_write_limits(uuid.uuid4())
+    assert throttle.record_attempt(db_session, limits) is not None
+    advance(minutes=120)
+    throttle.record_attempt(db_session, throttle.login_limits(EMAIL, IP))
+    assert throttle.record_attempt(db_session, limits) is None
 
 
 def test_keys_hold_no_plaintext_email_and_ignore_case(db_session) -> None:

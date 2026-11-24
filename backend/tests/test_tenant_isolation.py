@@ -57,6 +57,18 @@ def _parameters(path: str) -> set[str]:
 GUARDED, OTHER = _classify(create_app())
 MATRIX = sorted(GUARDED)
 CHILD_MATRIX = [(verb, path) for verb, path in MATRIX if _parameters(path) - {"workspace_id"}]
+# People can belong to several workspaces. Everything else belongs to exactly one.
+OBJECT_MATRIX = [
+    (verb, path) for verb, path in MATRIX if _parameters(path) - {"workspace_id", "user_id"}
+]
+# One parameter is swapped at a time, so a check on one cannot hide a missing check on another.
+CHILD_SWAPS = [
+    (verb, path, name)
+    for verb, path in CHILD_MATRIX
+    for name in sorted(_parameters(path) - {"workspace_id"})
+]
+OBJECT_SWAPS = [swap for swap in CHILD_SWAPS if swap[2] != "user_id"]
+GET_PATHS = [path for verb, path in MATRIX if verb == "GET"]
 
 
 def test_every_route_uses_the_membership_check_or_is_allowlisted() -> None:
@@ -82,6 +94,13 @@ def test_matrix_covers_the_known_endpoints() -> None:
         ("DELETE", member),
     }
     assert set(CHILD_MATRIX) >= {("PATCH", member), ("DELETE", member)}
+    agent = f"{one}/agents/{{agent_id}}"
+    agent_routes = {(verb, agent) for verb in ("GET", "PATCH", "DELETE")} | {
+        ("POST", f"{agent}/{action}")
+        for action in ("duplicate", "pause", "resume", "archive", "restore")
+    }
+    assert set(MATRIX) >= agent_routes | {("GET", f"{one}/agents"), ("POST", f"{one}/agents")}
+    assert set(OBJECT_MATRIX) >= agent_routes
 
 
 @pytest.mark.parametrize(
@@ -131,8 +150,24 @@ def tenants(make_client):
     t.b_workspace = t.b.post(PREFIX, json={"name": "B private name"}).json()["id"]
     # Real ids of things in B's workspace, by path parameter. A new parameter must be added here
     # with a real object of B's: an invented id would prove nothing.
-    t.b_children = {"user_id": t.b_id}
+    t.b_children = {"user_id": t.b_id, "agent_id": _agent(t.b, t.b_workspace, "B secret agent")}
+    t.a_children = {"user_id": t.a_id, "agent_id": _agent(t.a, t.a_workspace, "A agent")}
+    # B's other workspace, with an agent of its own.
+    (t.b_other_workspace,) = (w["id"] for w in t.b.get(PREFIX).json() if w["id"] != t.b_workspace)
+    t.b_other_children = {
+        "user_id": t.b_id,
+        "agent_id": _agent(t.b, t.b_other_workspace, "B other agent"),
+    }
     return t
+
+
+def _agent(client, workspace_id: str, name: str) -> str:
+    response = client.post(
+        f"{PREFIX}/{workspace_id}/agents",
+        json={"name": name, "instructions": f"{name} instructions"},
+    )
+    assert response.status_code == 201
+    return response.json()["id"]
 
 
 def _fill(path: str, workspace_id, children: dict) -> str:
@@ -157,7 +192,14 @@ def _error(response) -> dict:
 
 
 def _assert_no_tenant_data(tenants, response) -> None:
-    for secret in ("tenant-b", "B private name", tenants.b_id, tenants.b_workspace):
+    for secret in (
+        "tenant-b",
+        "B private name",
+        "B secret agent",
+        tenants.b_id,
+        tenants.b_workspace,
+        tenants.b_children["agent_id"],
+    ):
         assert secret not in response.text
 
 
@@ -166,8 +208,7 @@ def _assert_no_tenant_data(tenants, response) -> None:
 @pytest.mark.parametrize(("verb", "path"), MATRIX)
 def test_outsider_gets_404_and_no_data(tenants, db_session, verb, path, child) -> None:
     """User A, signed in, targets user B's workspace."""
-    children = tenants.b_children if child == "theirs" else {"user_id": tenants.a_id}
-    children = {**tenants.b_children, **children}
+    children = tenants.b_children if child == "theirs" else tenants.a_children
     before = _snapshot(db_session)
     response = tenants.a.request(verb, _fill(path, tenants.b_workspace, children), json=BODY)
     assert response.status_code == 404
@@ -180,17 +221,78 @@ def test_outsider_gets_404_and_no_data(tenants, db_session, verb, path, child) -
 
 
 @pytest.mark.db
-@pytest.mark.parametrize(("verb", "path"), CHILD_MATRIX)
+@pytest.mark.parametrize(("verb", "path", "name"), CHILD_SWAPS)
 def test_own_workspace_does_not_open_another_tenants_objects(
-    tenants, db_session, verb, path
+    tenants, db_session, verb, path, name
 ) -> None:
     """User A, an owner, uses their own workspace id with the id of something of B's."""
     before = _snapshot(db_session)
-    url = _fill(path, tenants.a_workspace, tenants.b_children)
-    response = tenants.a.request(verb, url, json=BODY)
+    children = tenants.a_children | {name: tenants.b_children[name]}
+    response = tenants.a.request(verb, _fill(path, tenants.a_workspace, children), json=BODY)
     assert response.status_code == 404
     _assert_no_tenant_data(tenants, response)
     assert _snapshot(db_session) == before
+
+
+@pytest.mark.db
+@pytest.mark.parametrize(("verb", "path"), MATRIX)
+def test_the_rightful_owner_reaches_the_same_objects(tenants, verb, path) -> None:
+    """Positive control: the attacks above get 404 for isolation, not for a bad id.
+
+    Access is resolved before the body is validated, so even a 422 proves it was found.
+    """
+    url = _fill(path, tenants.b_workspace, tenants.b_children)
+    status = tenants.b.request(verb, url, json=BODY).status_code
+    assert status < 500 and status not in (401, 404, 405)
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("to_other", [True, False])
+@pytest.mark.parametrize(("verb", "path", "name"), OBJECT_SWAPS)
+def test_one_workspace_does_not_open_the_callers_other_workspace(
+    tenants, db_session, verb, path, name, to_other
+) -> None:
+    """User B owns both workspaces, so only the workspace in the path can refuse this."""
+    before = _snapshot(db_session)
+    workspace, own, foreign = tenants.b_workspace, tenants.b_children, tenants.b_other_children
+    if not to_other:
+        workspace, own, foreign = tenants.b_other_workspace, foreign, own
+    url = _fill(path, workspace, own | {name: foreign[name]})
+    for body in (BODY, {"name": "Moved", "instructions": "x", "version": 1}, {"version": 9}):
+        assert tenants.b.request(verb, url, json=body).status_code == 404
+    assert _snapshot(db_session) == before
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("path", GET_PATHS)
+def test_reading_your_own_workspace_shows_only_that_workspace(tenants, path) -> None:
+    """Collections have no id to attack, so look at what they return."""
+    response = tenants.a.get(_fill(path, tenants.a_workspace, tenants.a_children))
+    assert response.status_code == 200
+    _assert_no_tenant_data(tenants, response)
+    response = tenants.b.get(_fill(path, tenants.b_workspace, tenants.b_children))
+    assert response.status_code == 200
+    for other in (
+        "B other agent",
+        tenants.b_other_workspace,
+        tenants.b_other_children["agent_id"],
+        tenants.a_workspace,
+        tenants.a_children["agent_id"],
+    ):
+        assert other not in response.text
+
+
+@pytest.mark.db
+def test_archived_agent_list_shows_only_the_workspace_in_the_path(tenants) -> None:
+    for workspace, children in (
+        (tenants.b_workspace, tenants.b_children),
+        (tenants.b_other_workspace, tenants.b_other_children),
+    ):
+        url = f"{PREFIX}/{workspace}/agents/{children['agent_id']}/archive"
+        assert tenants.b.post(url).status_code == 200
+    page = tenants.b.get(f"{PREFIX}/{tenants.b_workspace}/agents?archived=true").json()
+    assert [item["id"] for item in page["items"]] == [tenants.b_children["agent_id"]]
+    assert page["total"] == 1
 
 
 @pytest.mark.db
@@ -228,5 +330,6 @@ def test_list_never_shows_another_tenants_workspace(tenants) -> None:
 @pytest.mark.db
 def test_snapshot_sees_every_tenant_table(tenants, db_session) -> None:
     snapshot = _snapshot(db_session)
-    assert {"users", "sessions", "workspaces", "memberships"} <= set(snapshot)
-    assert all(snapshot[name] for name in ("users", "workspaces", "memberships"))
+    names = {"users", "sessions", "workspaces", "memberships", "agents", "agent_versions"}
+    assert names <= set(snapshot)
+    assert all(snapshot[name] for name in names)

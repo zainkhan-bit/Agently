@@ -4,7 +4,7 @@
 
 Agently is a multi-tenant SaaS where people create their own AI agents, give them instructions and private knowledge, and use them from one workspace. See [docs/PRODUCT_VISION.md](docs/PRODUCT_VISION.md) and [docs/MASTER_PRD.md](docs/MASTER_PRD.md). Current progress: [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-> Status: early development (Phase 1 — SaaS foundation). Accounts, workspaces and the dashboard work; agents do not exist yet.
+> Status: early development (Phase 2 — agent creation). Accounts, workspaces and the dashboard work; agents have an API but no screens yet, and cannot run.
 
 ## Repository layout
 
@@ -100,6 +100,22 @@ Auth settings are in `backend/.env.example`. `ENVIRONMENT` defaults to `producti
 Non-members get 404, members without the owner role get 403, and breaking the last-owner or 20-workspace rule gets 409. Registration creates a personal workspace. People cannot be invited yet. Pages: `/workspaces` (list and create), `/workspaces/<id>` (dashboard), `/workspaces/<id>/settings` (members, delete).
 
 API docs (non-production): http://localhost:8000/api/docs
+
+## Agent endpoints
+
+Under `/api/workspaces/{id}/agents`. Any member may use them, except delete.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET ?archived=false&limit=50&offset=0` | List, newest first; `archived=true` lists only archived agents |
+| `POST` | Create (active, version 1) |
+| `GET /{agent_id}` | Current configuration |
+| `PATCH /{agent_id}` | Edit. Must state the `version` it started from; omitted fields stay. No change, no new version |
+| `POST /{agent_id}/duplicate` | Copy into a new paused agent |
+| `POST /{agent_id}/pause`, `/resume`, `/archive`, `/restore` | Change status; archived agents are read-only and restore to paused |
+| `DELETE /{agent_id}` | Owners only, permanent (ADR-0005) |
+
+An agent outside the workspace in the path is a 404. An outdated edit, a disallowed status change, the 50-agent limit and the 200-version limit answer 409. Create, edit and duplicate share a limit of 60 requests per user per 10 minutes (429); invalid requests count, except bodies that are not JSON. Limits are in `backend/.env.example`. Models cannot be chosen yet.
 
 ## Tests and checks
 

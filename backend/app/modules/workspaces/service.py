@@ -66,7 +66,7 @@ def create_workspace(db: Session, user_id: uuid.UUID, name: str) -> Workspace:
 
 
 def rename_workspace(db: Session, context: WorkspaceContext, name: str) -> Workspace:
-    _lock_owners_as_owner(db, context)
+    lock_owners_as_owner(db, context)
     db.execute(
         update(Workspace)
         .where(Workspace.id == context.workspace.id)
@@ -80,7 +80,7 @@ def rename_workspace(db: Session, context: WorkspaceContext, name: str) -> Works
 
 def delete_workspace(db: Session, context: WorkspaceContext) -> None:
     """Delete permanently. The database cascades to everything in the workspace."""
-    _lock_owners_as_owner(db, context)
+    lock_owners_as_owner(db, context)
     db.execute(delete(Workspace).where(Workspace.id == context.workspace.id))
     db.commit()
 
@@ -97,7 +97,7 @@ def list_members(
 
 
 def change_role(db: Session, context: WorkspaceContext, user_id: uuid.UUID, role: str) -> User:
-    owners = _lock_owners_as_owner(db, context)
+    owners = lock_owners_as_owner(db, context)
     membership = _lock_membership(db, context, user_id)
     if membership.role != role:
         if role == "owner":
@@ -111,7 +111,7 @@ def change_role(db: Session, context: WorkspaceContext, user_id: uuid.UUID, role
 
 
 def remove_member(db: Session, context: WorkspaceContext, user_id: uuid.UUID) -> None:
-    owners = _lock_owners_as_owner(db, context)
+    owners = lock_owners_as_owner(db, context)
     membership = _lock_membership(db, context, user_id)
     _check_not_last_owner(owners, membership)
     db.delete(membership)
@@ -126,6 +126,33 @@ def leave_workspace(db: Session, context: WorkspaceContext) -> None:
     db.commit()
 
 
+def lock_for_member_write(db: Session, context: WorkspaceContext) -> None:
+    """Make the workspace's writes take turns, and 404 unless the caller is still a member.
+
+    Starts with the same lock as _lock_owners, so the two cannot deadlock. The share lock keeps
+    a removal waiting until this transaction ends.
+    """
+    _lock_workspace(db, context)
+    member = db.scalar(
+        select(Membership.id)
+        .where(
+            Membership.workspace_id == context.workspace.id,
+            Membership.user_id == context.user_id,
+        )
+        .with_for_update(read=True)
+    )
+    if member is None:
+        raise NotFoundError()
+
+
+def _lock_workspace(db: Session, context: WorkspaceContext) -> None:
+    db.execute(
+        select(Workspace.id)
+        .where(Workspace.id == context.workspace.id)
+        .with_for_update(key_share=True)
+    )
+
+
 def _lock_owners(db: Session, context: WorkspaceContext) -> set[uuid.UUID]:
     """Lock the workspace's owner memberships until commit. Returns the owners' user ids.
 
@@ -133,11 +160,7 @@ def _lock_owners(db: Session, context: WorkspaceContext) -> set[uuid.UUID]:
     any earlier change has committed, so it sees everyone promoted meanwhile and cannot lock
     owners in a different order from another request (a deadlock).
     """
-    db.execute(
-        select(Workspace.id)
-        .where(Workspace.id == context.workspace.id)
-        .with_for_update(key_share=True)
-    )
+    _lock_workspace(db, context)
     return set(
         db.scalars(
             select(Membership.user_id)
@@ -148,7 +171,7 @@ def _lock_owners(db: Session, context: WorkspaceContext) -> set[uuid.UUID]:
     )
 
 
-def _lock_owners_as_owner(db: Session, context: WorkspaceContext) -> set[uuid.UUID]:
+def lock_owners_as_owner(db: Session, context: WorkspaceContext) -> set[uuid.UUID]:
     owners = _lock_owners(db, context)
     if context.user_id not in owners:
         _lock_membership(db, context, context.user_id)  # 404 if no longer a member at all

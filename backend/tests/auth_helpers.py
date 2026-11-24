@@ -39,6 +39,9 @@ def configure(monkeypatch) -> Iterator[Callable[..., None]]:
         login_limit_per_ip=100,
         signup_window_minutes=60,
         signup_limit_per_ip=100,
+        agent_limit_per_workspace=50,
+        agent_write_limit=1000,
+        agent_write_window_minutes=10,
     )
     yield apply
     get_settings.cache_clear()

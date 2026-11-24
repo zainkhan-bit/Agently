@@ -22,6 +22,7 @@ LOGIN_ACCOUNT = "login_account"
 LOGIN_ACCOUNT_IP = "login_account_ip"
 LOGIN_IP = "login_ip"
 SIGNUP_IP = "signup_ip"
+AGENT_WRITE = "agent_write"
 
 
 @dataclass(frozen=True)
@@ -55,6 +56,12 @@ def signup_limits(ip: str) -> list[Limit]:
     network = throttle_network(ip)
     window = settings.signup_window_minutes
     return [_limit(SIGNUP_IP, settings.signup_limit_per_ip, window, network)]
+
+
+def agent_write_limits(user_id: uuid.UUID) -> list[Limit]:
+    settings = get_settings()
+    window = settings.agent_write_window_minutes
+    return [_limit(AGENT_WRITE, settings.agent_write_limit, window, str(user_id))]
 
 
 def record_attempt(session: Session, limits: Sequence[Limit]) -> dict[str, uuid.UUID] | None:
@@ -113,7 +120,13 @@ def _count(session: Session, limit: Limit) -> int:
 
 def _delete_expired(session: Session) -> None:
     settings = get_settings()
-    longest = timedelta(minutes=max(settings.login_window_minutes, settings.signup_window_minutes))
+    longest = timedelta(
+        minutes=max(
+            settings.login_window_minutes,
+            settings.signup_window_minutes,
+            settings.agent_write_window_minutes,
+        )
+    )
     session.execute(
         delete(AuthThrottleEvent).where(AuthThrottleEvent.created_at <= clock.now() - longest)
     )

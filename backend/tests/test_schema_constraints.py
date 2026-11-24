@@ -8,7 +8,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models import Membership, User, UserSession, Workspace
+from app.models import Agent, AgentVersion, Membership, User, UserSession, Workspace
 
 pytestmark = pytest.mark.db
 
@@ -88,6 +88,59 @@ def test_membership_rejects_unknown_workspace(db_session: Session) -> None:
     db_session.add(Membership(user_id=user.id, workspace_id=uuid.uuid4(), role="member"))
     with pytest.raises(IntegrityError, match="fk_memberships_workspace_id_workspaces"):
         db_session.flush()
+
+
+def make_agent(session: Session, workspace: Workspace, user: User) -> Agent:
+    agent = Agent(workspace_id=workspace.id, status="active", current_version=1, created_by=user.id)
+    session.add(agent)
+    session.flush()
+    session.add(make_version(agent, user))
+    session.flush()
+    return agent
+
+
+def make_version(agent: Agent, user: User, number: int = 1) -> AgentVersion:
+    return AgentVersion(
+        agent_id=agent.id, number=number, name="A", instructions="I", created_by=user.id
+    )
+
+
+@pytest.mark.parametrize("status", ["draft", "", "Active"])
+def test_agent_status_must_be_known(db_session: Session, status: str) -> None:
+    workspace = make_workspace(db_session)
+    db_session.add(Agent(workspace_id=workspace.id, status=status, current_version=1))
+    with pytest.raises(IntegrityError, match="ck_agents_status_valid"):
+        db_session.flush()
+
+
+def test_agent_version_numbers_are_unique_and_positive(db_session: Session) -> None:
+    user = make_user(db_session)
+    agent = make_agent(db_session, make_workspace(db_session), user)
+    with pytest.raises(IntegrityError, match="uq_agent_versions_agent_id_number"):
+        with db_session.begin_nested():
+            db_session.add(make_version(agent, user))
+    with pytest.raises(IntegrityError, match="ck_agent_versions_number_positive"):
+        with db_session.begin_nested():
+            db_session.add(make_version(agent, user, 0))
+
+
+@pytest.mark.parametrize("parent", ["agent", "workspace"])
+def test_deleting_an_agent_or_its_workspace_removes_versions(
+    db_session: Session, parent: str
+) -> None:
+    user, workspace = make_user(db_session), make_workspace(db_session)
+    agent = make_agent(db_session, workspace, user)
+    model, key = (Agent, agent.id) if parent == "agent" else (Workspace, workspace.id)
+    db_session.execute(delete(model).where(model.id == key))
+    assert count(db_session, Agent) == count(db_session, AgentVersion) == 0
+
+
+def test_deleting_the_creator_keeps_agents_and_versions(db_session: Session) -> None:
+    user, workspace = make_user(db_session), make_workspace(db_session)
+    make_agent(db_session, workspace, user)
+    db_session.execute(delete(User).where(User.id == user.id))
+    assert count(db_session, Agent, Agent.created_by.is_(None)) == 1
+    assert count(db_session, AgentVersion, AgentVersion.created_by.is_(None)) == 1
 
 
 def test_session_rejects_unknown_user(db_session: Session) -> None:

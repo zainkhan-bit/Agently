@@ -15,12 +15,14 @@ from tests.db_utils import sibling_url
 
 pytestmark = pytest.mark.db
 
-IDENTITY_TABLES = {
+APP_TABLES = {
     "users",
     "workspaces",
     "memberships",
     "sessions",
     "auth_throttle_events",
+    "agents",
+    "agent_versions",
 }
 
 
@@ -34,13 +36,13 @@ def test_upgrade_downgrade_upgrade_on_fresh_database(scratch_url) -> None:
         assert _tables(engine) == set()
 
         migrate(engine)
-        assert _tables(engine) == IDENTITY_TABLES | {"alembic_version"}
+        assert _tables(engine) == APP_TABLES | {"alembic_version"}
 
         downgrade(engine)
-        assert _tables(engine) & IDENTITY_TABLES == set()
+        assert _tables(engine) & APP_TABLES == set()
 
         migrate(engine)
-        assert _tables(engine) >= IDENTITY_TABLES
+        assert _tables(engine) >= APP_TABLES
     finally:
         engine.dispose()
 

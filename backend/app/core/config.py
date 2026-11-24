@@ -45,6 +45,12 @@ class Settings(BaseSettings):
     signup_window_minutes: int = Field(default=60, gt=0)
     signup_limit_per_ip: int = Field(default=5, gt=0)
 
+    # Archived agents count. Lowering the limit only blocks new agents.
+    agent_limit_per_workspace: int = Field(default=50, gt=0)
+    # Create, edit and duplicate requests per user, across all workspaces.
+    agent_write_limit: int = Field(default=60, gt=0)
+    agent_write_window_minutes: int = Field(default=10, gt=0)
+
     # Not env_ignore_empty: that would make an empty DATABASE_URL fall back to backend/.env.
     @field_validator("trusted_proxy_hops", "session_cookie_secure", mode="before")
     @classmethod

@@ -17,20 +17,29 @@ PostgreSQL 16+ (developed on 18), SQLAlchemy 2.x models, Alembic migrations. Mod
 | `workspaces` | Tenants | `name` required. |
 | `memberships` | A user's role in a workspace | One per `(user_id, workspace_id)`. `role` is `owner` or `member` (check constraint, so adding a role later is a constraint swap, not an enum migration). A user can belong to many workspaces. |
 | `sessions` | Server-side login sessions (ADR-0003) | Stores only `token_hash`, unique and indexed; never the raw token. `expires_at` required, `revoked_at` nullable (set by logout). |
-| `auth_throttle_events` | Counted login and signup attempts | One row per attempt and limit. `key_hash` is a SHA-256 of the scope plus normalised email and/or IP; no plaintext email. `created_at` is set by the application. Rows older than the longest throttle window are deleted whenever a new attempt is recorded, so the table stays bounded. Not linked to `users`: unknown emails are counted too. |
+| `agents` | Agents of a workspace | `status` is `active`, `paused` or `archived` (check constraint). `created_by` is nullable. |
+| `agent_versions` | Saved configurations | Unique per `(agent_id, number)`. `model` is always empty until Slice 3.1. `created_by` is nullable. |
+| `auth_throttle_events` | Counted login, signup and agent-write attempts | One row per attempt and limit. `key_hash` is a SHA-256 of the scope plus normalised email and/or IP, or the user id for agent writes; no plaintext email. `created_at` is set by the application. Rows older than the longest throttle window are deleted whenever a new attempt is recorded, so the table stays bounded. Not linked to `users`: unknown emails are counted too. |
+
+## Agents
+
+An agent's configuration lives only in its versions; `agents.current_version` says which one is in use. A version is never changed after it is written. An agent has at most 200 versions (then changing edits are refused; nothing is pruned), and a workspace has at most 50 agents, archived included (`AGENT_LIMIT_PER_WORKSPACE`).
+
+**Lock order for every agent write:** workspace row (`FOR NO KEY UPDATE`), the caller's membership (`FOR SHARE`), then the agent (`FOR UPDATE`). Agent writes therefore take turns within a workspace. Deleting an agent locks like the owner actions below and then deletes. The write throttle commits, so it always runs before the first lock.
 
 ## Deletion behaviour (PRD DATA-1)
 
 Deletion is a **hard delete**. Rows are removed immediately: there are no `deleted_at` columns and no purge job. The database enforces the cascades with `ON DELETE CASCADE`, so they hold for ORM deletes and raw SQL alike:
 
-- Deleting a **workspace** deletes its memberships. Its users remain.
-- Deleting a **user** deletes their sessions and memberships. The workspaces they belonged to remain.
+- Deleting a **workspace** deletes its memberships, agents and their versions. Its users remain.
+- Deleting an **agent** (owners only, any status) deletes its versions. Later, its conversations and executions too; usage rows survive (ADR-0005).
+- Deleting a **user** deletes their sessions and memberships. The workspaces they belonged to remain. Agents and versions they created remain with an empty `created_by`.
 
 **Last owner:** leaving, removing or demoting a workspace's last owner is refused. The service locks the workspace row and then its owner memberships (`SELECT … FOR UPDATE`) and decides from the locked rows, so simultaneous requests cannot leave it without an owner. A person owns at most 20 workspaces; that check locks the user's row first.
 
-**Known gap:** account deletion does not exist in the app yet. Deleting a user directly in the database still cascades and can leave a workspace with no owner. The slice that adds account deletion must apply the last-owner rule, lock in the same order (workspace, memberships, then user), and handle a create or promotion waiting on the deleted user.
+**Known gap:** account deletion does not exist in the app yet. Deleting a user directly in the database still cascades and can leave a workspace with no owner. The slice that adds account deletion must apply the last-owner rule, lock in the same order (every workspace of the user, memberships, then user; otherwise it can deadlock with an agent write), and handle a create or promotion waiting on the deleted user.
 
-Later tables (agents, conversations, memories, knowledge sources) will document their deletion behaviour here when they are added.
+Later tables (conversations, memories, knowledge sources) will document their deletion behaviour here when they are added.
 
 ## Migration workflow (from `backend/`)
 

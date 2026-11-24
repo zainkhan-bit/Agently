@@ -9,7 +9,7 @@
 |---|---|---|
 | Anonymous visitor | — | Register, sign in |
 | Workspace **owner** | One workspace | Everything in the workspace, incl. delete workspace, manage members, approve sensitive tool actions |
-| Workspace **member** | One workspace | Create/use agents, upload knowledge, chat; cannot change roles or delete the workspace |
+| Workspace **member** | One workspace | Create/use agents, upload knowledge, chat; cannot permanently delete agents (ADR-0005), change roles or delete the workspace |
 
 The permission model is a role → permission map on the server so new roles can be added later.
 
@@ -43,10 +43,10 @@ Each requirement is testable. IDs are referenced from tests and `PROJECT_STATUS.
 - **WS-4** Members cannot promote themselves. *AC:* role changes require owner.
 
 ### Agents (AGT)
-- **AGT-1** Create/list/view/edit/duplicate/pause/archive/delete agents. *AC:* each operation works for members; cross-workspace attempts return 404.
+- **AGT-1** Create/list/view/edit/duplicate/pause/archive/delete agents. *AC:* each operation except delete works for members; delete is for owners and members get 403 (ADR-0005); cross-workspace attempts return 404.
 - **AGT-2** Validation. *AC:* empty/oversized names and instructions rejected with field-level errors.
 - **AGT-3** Paused/archived agents cannot run. *AC:* chat returns a clear "agent paused" error.
-- **AGT-4** Versioned configuration. *AC:* every save produces a version; each execution records the version used; stale updates are rejected (optimistic concurrency).
+- **AGT-4** Versioned configuration. *AC:* every save that changes something produces a version, up to 200 per agent; each execution records the version used; stale updates are rejected (optimistic concurrency).
 - **AGT-5** Prompt-to-agent builder. *AC:* produces a schema-validated *draft*; malformed model output is handled; generated drafts cannot enable tools or permissions; nothing saves without explicit user action.
 
 ### Models (MDL)
