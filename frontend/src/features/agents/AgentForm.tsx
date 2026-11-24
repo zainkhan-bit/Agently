@@ -62,17 +62,23 @@ type Props = {
   onSave: (values: AgentFields) => Promise<void>;
   /** Extra help for some errors. */
   errorHelp?: (error: unknown) => React.ReactNode;
+  /** Nothing can be typed or saved, e.g. while the text is being replaced. */
+  locked?: boolean;
+  /** The page asks before leaving, and wants to know whether anything was edited. */
+  onEdited?: (edited: boolean) => void;
 };
 
 export function AgentForm(props: Props) {
-  const { initial, submitLabel, cancelHref, checkHint, onSave, errorHelp } = props;
+  const { initial, submitLabel, cancelHref, checkHint, onSave, errorHelp, locked = false, onEdited } = props;
   const [values, setValues] = useState(initial);
   const [errors, setErrors] = useState<Partial<AgentFields>>({});
   const [failure, setFailure] = useState<unknown>(null);
   const [pending, setPending] = useState(false);
   const inFlight = useRef(false);
   const form = useRef<HTMLFormElement>(null);
-  useUnsavedChanges(FIELDS.some(({ field }) => values[field] !== initial[field]));
+  const edited = FIELDS.some(({ field }) => values[field] !== initial[field]);
+  useUnsavedChanges(edited, !onEdited);
+  useEffect(() => onEdited?.(edited), [edited, onEdited]);
 
   // Runs for every new set of errors, also when it names the same fields again.
   useEffect(() => {
@@ -82,7 +88,7 @@ export function AgentForm(props: Props) {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (inFlight.current) return;
+    if (inFlight.current || locked) return;
     setFailure(null);
     const found = check(values);
     setErrors(found);
@@ -116,7 +122,7 @@ export function AgentForm(props: Props) {
         const shared = {
           id,
           value: values[field],
-          readOnly: pending, // text typed while saving would be lost
+          readOnly: pending || locked, // text typed while saving would be lost
           autoComplete: "off",
           "aria-required": required,
           "aria-invalid": Boolean(errors[field]) || tooLong,
@@ -165,7 +171,7 @@ export function AgentForm(props: Props) {
         </div>
       )}
       <div className="flex flex-wrap items-center gap-4">
-        <button type="submit" aria-disabled={pending} className={buttonClass}>
+        <button type="submit" aria-disabled={pending || locked} className={buttonClass}>
           {pending ? "Saving…" : submitLabel}
         </button>
         <Link href={cancelHref} className="underline">

@@ -1,17 +1,28 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 2 — Agent creation and configuration (Phase 1 exit gate met)
-**Next smallest task:** Slice 2.3 — Prompt-to-Agent builder
+**Next smallest task:** Slice 2.4 — Agent configuration and versions (not started, waiting for the owner)
 
 ## Must fix before any deployment
 
 - Run uvicorn with `--no-proxy-headers`, and put an edge proxy that appends to `X-Forwarded-For` in front (see Slice 1.2).
 
+## Before enabling a real provider key
+
+All of these, agreed with the owner on 2026-11-24:
+
+- Tell users, where they type their answers, that the answers go to an outside provider.
+- Set a spending cap on the provider account.
+- Run the real-provider test (guide 2.3: a valid draft from a real provider). BLOCKED until a key exists.
+- Give the adapter a hard deadline that it cannot exceed. The service passes a timeout but cannot stop a call.
+- Add a server-wide spending limit. The per-user and per-workspace limits do not stop someone with many accounts.
+- Stop provider and HTTP libraries from logging request text, also at `LOG_LEVEL=DEBUG`.
+
 ## Blocked / needs owner input
 
 - ~~Slice 1.1 blocked on local PostgreSQL credentials~~ — resolved 2026-11-21: `GET /api/health/ready` returns `database: ok`.
 - **Known gap (owner: the slice that adds account deletion):** it must refuse to delete a workspace's last owner, or transfer or delete the workspace first, with tests. Slice 1.3 enforces this for leaving, removal and demotion; account deletion does not exist in the app yet. Lock order and edge cases: `docs/DATABASE_DESIGN.md`.
-- Later (Phase 2.3 / 3.1): a real model-provider API key is needed for real-provider smoke tests. Until then those tests are BLOCKED and a mock provider is used.
+- A real model-provider API key is needed for real-provider tests (Slices 2.3 and 3.1). Until then they are BLOCKED and a mock provider is used.
 
 ## Phase 1 exit gate
 
@@ -294,3 +305,33 @@ Known gaps to fix or accept:
   - One browser-check run timed out waiting for Restore; not reproduced in 80 targeted repeats or the later full runs, cause unknown.
 - **Commit / push:** `feat(agents)` commit of 2026-11-24, pushed to `origin/main`.
 - **Next smallest task:** Slice 2.3 — Prompt-to-Agent builder
+
+### Slice 2.3 — Prompt-to-Agent builder
+- **Date:** 2026-11-24
+- **What changed:** Members answer five questions and get a draft in the agent form, which they edit and save themselves. Generating saves nothing. Output must be one JSON object of exactly name, purpose, description and instructions, without duplicate keys or hidden characters; anything else is rejected whole, without retries. Answers are escaped inside `<user_answer>` tags; a snapshot test holds the exact prompt. Limits: 10 generations per user and 30 per workspace per hour, 1,000 characters per answer, 3,000 together, 8 calls at once per process. New provider interface (system, user and assistant messages, timeout, output token limit; text and token counts) with a mock only. Without a provider the option is hidden; production refuses the mock.
+- **Also:** only one backend test run at a time can use the test databases (PostgreSQL advisory lock); a second one stops at once with a clear message.
+- **Plan:** `docs/plans/2026-11-24-1228-feat-prompt-to-agent-builder-plan.md`
+- **Files/modules affected:** `backend/app/modules/{providers,agent_builder}/`, `backend/app/modules/{agents,identity}/`, `backend/app/core/config.py`, `backend/tests/`, `frontend/src/features/agents/`, `frontend/src/lib/unsavedChanges.ts`, `docs/`, `.gstack/pregate.json`, `README.md`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (883) | `backend: .venv\Scripts\python -m pytest` | No skips, run alone |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Frontend | PASS (150) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
+| Browser checks, production build | PASS (42 + 116 + 99 + 22 + 15) | `docs/manual-checks/` | builder, agents, dashboard, auth, workspace; mock set for the test server only |
+| Test sensitivity | 41 of 42 caught | broke one guard at a time | The other was redundant code, removed |
+| Real provider | BLOCKED | | No key. The prompt-to-agent part of the Phase 2 exit gate is proven with the mock only |
+
+- **Review:** one independent Claude security reviewer on the backend, no external model. No P0/P1. Fixed: single joiners could carry hidden text between visible letters; slow calls could occupy every worker thread; a cleanup test that proved nothing; adapter errors and wrong return values could leak text or cause a 500; duplicate keys; rare invisible characters; invisible characters in source. Changes after the review, including the test lock, were not reviewed independently. The frontend was self-reviewed.
+- **Known limitations:**
+  - The flags of England, Scotland and Wales make a draft invalid (owner decision: recorded, not fixed). So do right-to-left marks, Thai zero-width spaces, soft hyphens, CJK and Mongolian variation selectors, and emoji newer than Python's Unicode tables.
+  - Joiners inside Arabic and Indic words, emoji styles and no-break or thin spaces stay allowed and could still carry a little hidden data. Many stacked accents can obscure text. Instructions typed by hand are not checked for hidden characters.
+  - Hidden characters in an answer are not refused up front: if the draft repeats them, the generation is used up and the message speaks of the AI's draft.
+  - Schema checks cannot judge what instructions say. The mock follows no instructions, so a real model's resistance to injection is untested.
+  - A validation error names an unknown field the caller sent, as everywhere in the API.
+  - A crash between recording the two limits counts one attempt without a call; simultaneous requests at a limit can refuse each other, but never exceed it.
+  - Untested: that the user limit is checked before the workspace limit (either order gives the same result today), and parallel generations against the limits (the shared throttle has such a test). The source-text check that generation cannot write agents is weak; the checks that no agent exists are the real guard.
+  - `backend/.env` was left unchanged: add `MODEL_PROVIDER=mock` there to use the builder locally.
+- **Commit / push:** `feat(agents)` commit of 2026-11-24, pushed to `origin/main`.
+- **Next smallest task:** Slice 2.4 — Agent configuration and versions (not started, waiting for the owner)

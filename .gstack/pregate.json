@@ -2,6 +2,7 @@
   "runner": "python scripts/run_tests.py {files}",
   "dependencies": {
     "backend/**": [
+      "backend/tests/test_agent_builder.py",
       "backend/tests/test_agent_concurrency.py",
       "backend/tests/test_agents_api.py",
       "backend/tests/test_auth_api.py",
@@ -16,7 +17,9 @@
       "backend/tests/test_health.py",
       "backend/tests/test_migrations.py",
       "backend/tests/test_origin_guard.py",
+      "backend/tests/test_providers.py",
       "backend/tests/test_route_inventory.py",
+      "backend/tests/test_run_lock.py",
       "backend/tests/test_run_tests_script.py",
       "backend/tests/test_schema_constraints.py",
       "backend/tests/test_seed_dev.py",
@@ -29,6 +32,7 @@
     ],
     "frontend/**": [
       "frontend/src/features/agents/agents.test.tsx",
+      "frontend/src/features/agents/describe.test.tsx",
       "frontend/src/features/auth/AccountView.test.tsx",
       "frontend/src/features/auth/AuthForm.test.tsx",
       "frontend/src/features/shell/AppShell.test.tsx",

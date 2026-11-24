@@ -57,5 +57,6 @@ Alembic reads the database URL from `DATABASE_URL` (environment or `backend/.env
 ## Tests
 
 - DB tests create `agently_test` themselves: it is dropped and recreated at the start of every run, migrated to head, and dropped at the end. Each migration test gets a fresh `agently_migrations_scratch`.
+- Only one run at a time: a run with database tests holds a PostgreSQL advisory lock (taken in the `postgres` database) until it has dropped its databases. A second run stops before any test.
 - The helpers refuse to create or drop any database whose name doesn't end in `_test` or `_scratch`, so the dev `agently` database can't be dropped by the test suite.
 - Without `DATABASE_URL`, DB tests are skipped, and pytest ends with a line like `21 database tests SKIPPED: DATABASE_URL not set`. A skip is not a pass.

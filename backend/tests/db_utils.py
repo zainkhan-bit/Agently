@@ -32,6 +32,13 @@ HOLDERS = text(
 )
 
 
+# Any constant works, as long as every test run uses the same one.
+RUN_LOCK_KEY = 4_173_202_611
+RUN_LOCK_MESSAGE = (
+    f"another test run is using {TEST_DATABASE_NAME}. Wait for it to finish and try again."
+)
+
+
 class DatabaseInUseError(RuntimeError):
     """Raised when a throwaway database is still in use after every attempt to drop it."""
 
@@ -71,6 +78,25 @@ def _maintenance_engine(base_url: str | URL):
         isolation_level="AUTOCOMMIT",
         connect_args={"connect_timeout": 5},
     )
+
+
+def lock_test_run(base_url: str | URL) -> Connection | None:
+    """Claim the throwaway databases for this run until the connection closes. None if taken.
+
+    Advisory locks belong to one database, so this always uses the maintenance database, which
+    also keeps the connection out of reach of the drops. A crashed run loses its lock by itself.
+    """
+    connection = _maintenance_engine(base_url).connect()
+    if connection.scalar(text("SELECT pg_try_advisory_lock(:key)"), {"key": RUN_LOCK_KEY}):
+        return connection
+    connection.close()
+    connection.engine.dispose()
+    return None
+
+
+def unlock_test_run(connection: Connection) -> None:
+    connection.close()
+    connection.engine.dispose()  # really disconnects, which releases the lock
 
 
 def own_client_pids(connection: Connection, name: str) -> list[int]:

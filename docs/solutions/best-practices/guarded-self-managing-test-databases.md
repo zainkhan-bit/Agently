@@ -36,7 +36,7 @@ The name guard looked complete, and an inline review passed it. The `?dbname=` b
 
 Known open limits, not fixed in Slice 1.1. Revisit them before they bite:
 
-- **Concurrent runs collide.** Fixed names plus ending existing connections mean two pytest runs on one server drop each other's databases. The fix is per-run names that still end in `_test`/`_scratch`.
+- **Concurrent runs collide: fixed 2026-11-24.** Fixed names plus ending existing connections meant two pytest runs on one server dropped each other's databases, seen as `KeyError` and "server closed the connection" in unrelated tests. A run now holds an advisory lock and a second one stops with a clear message. Advisory locks belong to one database, so it is taken in `postgres`, where the drops cannot end its connection.
 - **No host check.** If `DATABASE_URL` points at a shared or staging server whose role has `CREATEDB`, the suite creates and drops its two databases *there*.
 - **An all-skipped run still exits 0.** The loud summary line is the only signal, so CI must require the DB tests to actually run, for example with a strict mode that fails when they were skipped.
 - **Unmarked DB tests skip silently.** A test that uses the `database_url` fixture without `@pytest.mark.db` skips without being counted in the summary.

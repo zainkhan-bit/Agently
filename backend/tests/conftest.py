@@ -15,7 +15,8 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import URL, Engine, create_engine
+from sqlalchemy import URL, Connection, Engine, create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -25,6 +26,7 @@ from tests.auth_helpers import advance, api, auth_app, configure, make_client  #
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 SKIP_REASON = "DATABASE_URL not set"
 _skipped_db_tests_key = pytest.StashKey[int]()
+_run_lock_key = pytest.StashKey[Connection]()
 
 
 def configured_database_url() -> str | None:
@@ -42,6 +44,28 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in db_items:
         item.add_marker(pytest.mark.skip(reason=SKIP_REASON))
     config.stash[_skipped_db_tests_key] = len(db_items)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Two runs would drop each other's databases, so the second one stops before any test."""
+    url = configured_database_url()
+    uses_database = any(item.get_closest_marker("db") for item in session.items)
+    if url is None or not uses_database or session.config.option.collectonly:
+        return
+    try:
+        lock = db_utils.lock_test_run(url)
+    except OperationalError:
+        return  # no server: each database test reports that itself
+    if lock is None:
+        pytest.exit(db_utils.RUN_LOCK_MESSAGE, returncode=pytest.ExitCode.USAGE_ERROR)
+    session.config.stash[_run_lock_key] = lock
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    """After the fixtures have dropped the databases."""
+    lock = config.stash.get(_run_lock_key, None)
+    if lock is not None:
+        db_utils.unlock_test_run(lock)
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config: pytest.Config) -> None:

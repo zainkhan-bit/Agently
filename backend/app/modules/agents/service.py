@@ -71,6 +71,16 @@ def ensure_can_run(agent: Agent) -> None:
         raise AgentPausedError()
 
 
+def ensure_room(db: Session, context: WorkspaceContext) -> None:
+    """Only an early answer unless the workspace lock is held."""
+    limit = get_settings().agent_limit_per_workspace
+    count = db.scalar(
+        select(func.count()).select_from(Agent).where(Agent.workspace_id == context.workspace.id)
+    )
+    if (count or 0) >= limit:
+        raise AgentLimitError(f"A workspace can have at most {limit} agents, archived included.")
+
+
 def list_agents(
     db: Session, context: WorkspaceContext, *, archived: bool, limit: int, offset: int
 ) -> tuple[Sequence[Row[AgentWithVersion]], int]:
@@ -210,12 +220,7 @@ def _add_agent(
     db: Session, context: WorkspaceContext, status: str, configuration: dict[str, str | None]
 ) -> AgentWithVersion:
     """The workspace lock must be held, so that parallel requests count in turn."""
-    limit = get_settings().agent_limit_per_workspace
-    count = db.scalar(
-        select(func.count()).select_from(Agent).where(Agent.workspace_id == context.workspace.id)
-    )
-    if (count or 0) >= limit:
-        raise AgentLimitError(f"A workspace can have at most {limit} agents, archived included.")
+    ensure_room(db, context)
     agent = Agent(
         workspace_id=context.workspace.id,
         status=status,

@@ -14,11 +14,15 @@ export function confirmLeave(): boolean {
   return !unsaved || window.confirm(MESSAGE);
 }
 
-/** Ask before the page is left while `isDirty`: closing, reloading, in-app links and Back. */
-export function useUnsavedChanges(isDirty: boolean): void {
+/**
+ * Ask before the page is left while `isDirty`: closing, reloading, in-app links and Back.
+ * Only one per page may be enabled: they share one flag and one history entry.
+ */
+export function useUnsavedChanges(isDirty: boolean, enabled = true): void {
   const hasEntry = useRef(false);
 
   useEffect(() => {
+    if (!enabled) return;
     unsaved = isDirty;
     // Back cannot be cancelled. A second history entry for this page makes Back land here first.
     if (isDirty && !hasEntry.current) {
@@ -26,9 +30,10 @@ export function useUnsavedChanges(isDirty: boolean): void {
       history.pushState(history.state, "", location.href);
     }
     return clearUnsaved;
-  }, [isDirty]);
+  }, [isDirty, enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
     const here = location.href;
     const entry: unknown = history.state;
     let leaving = false;
@@ -80,5 +85,5 @@ export function useUnsavedChanges(isDirty: boolean): void {
       window.removeEventListener("click", onClick, true);
       window.removeEventListener("popstate", onPopState, true);
     };
-  }, []);
+  }, [enabled]);
 }

@@ -4,7 +4,7 @@
 
 Agently is a multi-tenant SaaS where people create their own AI agents, give them instructions and private knowledge, and use them from one workspace. See [docs/PRODUCT_VISION.md](docs/PRODUCT_VISION.md) and [docs/MASTER_PRD.md](docs/MASTER_PRD.md). Current progress: [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-> Status: early development (Phase 2 — agent creation). Accounts, workspaces and the dashboard work; agents can be created and managed under My Agents, but cannot run yet.
+> Status: early development (Phase 2 — agent creation). Accounts, workspaces and the dashboard work; agents can be created and managed under My Agents, with sample drafts from a mock provider, but cannot run yet.
 
 ## Repository layout
 
@@ -117,6 +117,15 @@ Under `/api/workspaces/{id}/agents`. Any member may use them, except delete.
 
 An agent outside the workspace in the path is a 404. An outdated edit, a disallowed status change, the 50-agent limit and the 200-version limit answer 409. Create, edit and duplicate share a limit of 60 requests per user per 10 minutes (429); invalid requests count, except bodies that are not JSON. Agent and workspace writes answer 503 `busy`, with nothing changed, when they wait more than 5 seconds for a lock, or when they stall for 30 seconds while holding one. Limits are in `backend/.env.example`. Models cannot be chosen yet.
 
+## Agent builder
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/workspaces/{id}/agent-builder` | Whether drafts are available |
+| `POST /api/workspaces/{id}/agent-builder/drafts` | Turn answers into a draft (name, purpose, description, instructions). Saves nothing |
+
+Set `MODEL_PROVIDER=mock` in `backend/.env` for local sample drafts made without AI; production refuses to start with it. Without a provider the option is hidden and the manual form still works. There is no real provider yet. Answers are at most 1,000 characters each and 3,000 together. Generation is limited to 10 per user and 30 per workspace per hour (429), counting every call to the provider. A full workspace answers 409. Other failures: 502 `draft_invalid`, 503 `provider_unavailable` (also when 8 drafts are already being generated), `provider_rate_limited` or `provider_not_configured`, 504 `provider_timeout`.
+
 ## Tests and checks
 
 Backend (from `backend/`):
@@ -128,7 +137,7 @@ Backend (from `backend/`):
 .venv\Scripts\alembic check   # models and migrations in sync
 ```
 
-Database tests need `DATABASE_URL` (the `agently` role needs `CREATEDB`). They create and drop their own `agently_test` / `agently_migrations_scratch` databases and never touch your dev database. Without `DATABASE_URL` they are skipped, and pytest ends with `N database tests SKIPPED: DATABASE_URL not set`. That is not a pass. To check this locally even though `backend/.env` exists, run from Git Bash: `DATABASE_URL= .venv/Scripts/python -m pytest`. Windows PowerShell 5.1 deletes a variable set to `""`, so `.env` would be used instead.
+Database tests need `DATABASE_URL` (the `agently` role needs `CREATEDB`). They create and drop their own `agently_test` / `agently_migrations_scratch` databases and never touch your dev database. Only one run at a time can use them: a second one stops with `another test run is using agently_test`. Without `DATABASE_URL` they are skipped, and pytest ends with `N database tests SKIPPED: DATABASE_URL not set`. That is not a pass. To check this locally even though `backend/.env` exists, run from Git Bash: `DATABASE_URL= .venv/Scripts/python -m pytest`. Windows PowerShell 5.1 deletes a variable set to `""`, so `.env` would be used instead.
 
 Frontend (from `frontend/`):
 
@@ -146,6 +155,7 @@ node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/workspace-browser-check.js
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/dashboard-browser-check.js
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/agents-browser-check.js
+node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/builder-browser-check.js   # needs MODEL_PROVIDER=mock
 ```
 
 ## Shutdown

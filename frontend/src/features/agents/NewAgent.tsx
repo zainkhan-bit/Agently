@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+
 import { PageHeading } from "@/components/PageHeading";
 import { useWorkspace } from "@/features/workspaces/useWorkspace";
 import { WorkspaceMissing } from "@/features/workspaces/WorkspaceMissing";
@@ -9,8 +11,9 @@ import { clearUnsaved } from "@/lib/unsavedChanges";
 import { usePageRouter } from "@/lib/usePageRouter";
 
 import { AgentForm } from "./AgentForm";
-import { agentPath, agentsPath } from "./paths";
+import { agentPath, agentsPath, describePath } from "./paths";
 import type { Agent } from "./types";
+import { useBuilder } from "./useBuilder";
 
 const EMPTY = { name: "", purpose: "", description: "", instructions: "" };
 
@@ -18,6 +21,7 @@ export function NewAgent({ workspaceId }: { workspaceId: string }) {
   const router = usePageRouter();
   // Nobody should fill in a form for a workspace they cannot use.
   const { state, load } = useWorkspace(workspaceId);
+  const { builder } = useBuilder(workspaceId);
 
   if (state.kind === "loading") return <p role="status">Loading…</p>;
   if (state.kind === "missing") return <WorkspaceMissing />;
@@ -28,6 +32,14 @@ export function NewAgent({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="flex flex-col gap-6">
       <PageHeading title="New agent">New agent</PageHeading>
+      {builder === "available" && (
+        <p>
+          Not sure what to write?{" "}
+          <Link href={describePath(workspaceId)} className="underline">
+            Describe your agent and get a draft
+          </Link>
+        </p>
+      )}
       <AgentForm
         initial={EMPTY}
         submitLabel="Create agent"

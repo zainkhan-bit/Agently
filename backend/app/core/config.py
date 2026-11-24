@@ -55,8 +55,19 @@ class Settings(BaseSettings):
     write_lock_timeout_seconds: int = Field(default=5, gt=0, le=3600)
     write_idle_timeout_seconds: int = Field(default=30, gt=0, le=3600)
 
+    # None = no AI features. The mock is not an AI and never runs in production.
+    model_provider: Literal["mock"] | None = None
+    mock_provider_scenario: Literal[
+        "ok", "timeout", "rate_limited", "unavailable", "malformed", "extra_field"
+    ] = "ok"
+    # Next.js gives up on a proxied request after 30 seconds.
+    provider_timeout_seconds: int = Field(default=20, gt=0, le=25)
+    generation_limit_per_user: int = Field(default=10, gt=0)
+    generation_limit_per_workspace: int = Field(default=30, gt=0)
+    generation_window_minutes: int = Field(default=60, gt=0)
+
     # Not env_ignore_empty: that would make an empty DATABASE_URL fall back to backend/.env.
-    @field_validator("trusted_proxy_hops", "session_cookie_secure", mode="before")
+    @field_validator("trusted_proxy_hops", "session_cookie_secure", "model_provider", mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
         return None if value == "" else value
@@ -75,6 +86,8 @@ class Settings(BaseSettings):
             raise RuntimeError("SESSION_COOKIE_SECURE must not be false in production")
         if self.trusted_proxy_hops is None:
             raise RuntimeError("TRUSTED_PROXY_HOPS must be set explicitly in production")
+        if self.model_provider == "mock":
+            raise RuntimeError("MODEL_PROVIDER must not be mock in production")
 
     @property
     def is_production(self) -> bool:

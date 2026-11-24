@@ -55,6 +55,7 @@ beforeEach(() => {
   routes = {
     "GET /api/workspaces/w1": role("owner"),
     "GET /api/workspaces/w1/members": () => Response.json([]),
+    "GET /api/workspaces/w1/agent-builder": () => Response.json({ available: false }),
     [`GET ${ONE}`]: () => Response.json(agent),
     [currentPage]: () => Response.json({ items: [agent], total: 1 }),
   };

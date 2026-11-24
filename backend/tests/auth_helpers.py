@@ -44,6 +44,12 @@ def configure(monkeypatch) -> Iterator[Callable[..., None]]:
         write_lock_timeout_seconds=5,
         write_idle_timeout_seconds=30,
         agent_write_window_minutes=10,
+        model_provider="mock",
+        provider_timeout_seconds=20,
+        mock_provider_scenario="ok",
+        generation_limit_per_user=10,
+        generation_limit_per_workspace=30,
+        generation_window_minutes=60,
     )
     yield apply
     get_settings.cache_clear()

@@ -10,7 +10,7 @@ Browser ──HTTPS──► Next.js frontend (UI, server components)
                      ▼
                   FastAPI backend ── SQLAlchemy ──► PostgreSQL (+ pgvector, Phase 4)
                      │                                  ▲
-                     ├─► Model provider adapter ──► Anthropic API / mock
+                     ├─► Model provider adapter ──► Anthropic API (3.1) / mock
                      └─► Local file storage (dev) / S3-compatible (prod)
                   Worker (Phase 4) ── polls jobs table in PostgreSQL ─┘
 ```
@@ -63,16 +63,27 @@ Login and signup throttling counts rows in `auth_throttle_events`. The client IP
 
 All errors use `{"error": {"code": "<stable_code>", "message": "<safe text>", "details": ..., "request_id": "..."}}`. Unexpected errors are logged with the request ID and return a generic message.
 
-## 7. Configuration and secrets
+## 7. Model providers and generated drafts
+
+`app/modules/providers` defines the only way to call a model: a list of system, user and assistant messages, a timeout and a maximum of output tokens go in; text and token counts come out. Configuration chooses the provider, never a request. Slice 3.1 adds streaming and a real adapter.
+
+`app/modules/agent_builder` turns a person's answers into a draft and cannot save one. Answers and model output are both untrusted:
+
+- The whole prompt is in `prompt.py`, with an exact snapshot in `backend/tests/snapshots/`. Answers are escaped inside `<user_answer>` tags and never enter the system message.
+- Output must be one JSON object with exactly four text fields within the agent limits, without duplicate keys or hidden characters. Anything else is rejected whole.
+- No database connection is held during the call, and at most 8 calls run at once per process. Answers, prompts, output and provider errors are neither stored nor logged.
+- Schema checks cannot judge what instructions say. The person's review does, and agents have no permissions a draft could grant.
+
+## 8. Configuration and secrets
 
 All configuration via environment variables (`.env` locally, never committed). `.env.example` contains placeholders only. Provider keys are server-side only.
 
-## 8. Local development services
+## 9. Local development services
 
 - PostgreSQL (native install or `docker compose up db`).
 - Backend: `uvicorn app.main:app --reload --no-proxy-headers` on port 8000.
 - Frontend: `npm run dev` on port 3000, proxying `/api/*` to the backend.
 
-## 9. Deployment shape (initial)
+## 10. Deployment shape (initial)
 
 Two containers (frontend, backend) + managed PostgreSQL + S3-compatible storage. Detailed in Phase 6.

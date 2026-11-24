@@ -23,6 +23,8 @@ LOGIN_ACCOUNT_IP = "login_account_ip"
 LOGIN_IP = "login_ip"
 SIGNUP_IP = "signup_ip"
 AGENT_WRITE = "agent_write"
+GENERATION_USER = "generation_user"
+GENERATION_WORKSPACE = "generation_workspace"
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,17 @@ def agent_write_limits(user_id: uuid.UUID) -> list[Limit]:
     settings = get_settings()
     window = settings.agent_write_window_minutes
     return [_limit(AGENT_WRITE, settings.agent_write_limit, window, str(user_id))]
+
+
+def generation_limits(user_id: uuid.UUID, workspace_id: uuid.UUID) -> list[Limit]:
+    settings = get_settings()
+    window = settings.generation_window_minutes
+    by_workspace = settings.generation_limit_per_workspace
+    return [
+        # Order matters: someone over their own limit must not use up the workspace's.
+        _limit(GENERATION_USER, settings.generation_limit_per_user, window, str(user_id)),
+        _limit(GENERATION_WORKSPACE, by_workspace, window, str(workspace_id)),
+    ]
 
 
 def record_attempt(session: Session, limits: Sequence[Limit]) -> dict[str, uuid.UUID] | None:
@@ -125,6 +138,7 @@ def _delete_expired(session: Session) -> None:
             settings.login_window_minutes,
             settings.signup_window_minutes,
             settings.agent_write_window_minutes,
+            settings.generation_window_minutes,
         )
     )
     session.execute(
