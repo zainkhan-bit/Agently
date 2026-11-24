@@ -66,6 +66,8 @@ npm run dev
 
 Open http://localhost:3000. The page shows a **System status** panel that reports whether the API and database are reachable, with guidance if not. The frontend proxies `/api/*` to `BACKEND_URL` (default `http://127.0.0.1:8000`).
 
+The dev server only uses port 3000. If it stops with `EADDRINUSE`, stop the other server on that port: on any other port every write is refused, because the backend only accepts the origins in `ALLOWED_ORIGINS`.
+
 ## Health endpoints
 
 | Endpoint | Meaning |
