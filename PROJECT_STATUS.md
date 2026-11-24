@@ -1,7 +1,7 @@
 # Project Status — Agently
 
-**Current milestone:** Phase 1 — SaaS foundation (Phase 0 exit gate met)
-**Next smallest task:** Slice 1.4 — dashboard shell
+**Current milestone:** Phase 2 — Agent creation and configuration (Phase 1 exit gate met)
+**Next smallest task:** Slice 2.1 — agent data model and APIs
 
 ## Must fix before any deployment
 
@@ -13,6 +13,34 @@
 - ~~Slice 1.1 blocked on local PostgreSQL credentials~~ — resolved 2026-11-21: `GET /api/health/ready` returns `database: ok`.
 - **Known gap (owner: the slice that adds account deletion):** it must refuse to delete a workspace's last owner, or transfer or delete the workspace first, with tests. Slice 1.3 enforces this for leaving, removal and demotion; account deletion does not exist in the app yet. Lock order and edge cases: `docs/DATABASE_DESIGN.md`.
 - Later (Phase 2.3 / 3.1): a real model-provider API key is needed for real-provider smoke tests. Until then those tests are BLOCKED and a mock provider is used.
+
+## Phase 1 exit gate
+
+Checked 2026-11-24, after Slice 1.4. **All three gates pass locally.** There is no CI yet, so nothing re-runs these automatically.
+
+| Gate (`docs/ROADMAP.md`) | Result | Proof |
+|---|---|---|
+| Secure login | PASS | `backend/tests/test_auth_api.py`, `test_auth_throttling.py`, `test_origin_guard.py`, `test_route_inventory.py`; `docs/manual-checks/auth-browser-check.js` (21) |
+| Workspace dashboard | PASS | `frontend/src/features/shell/AppShell.test.tsx`, `frontend/src/features/workspaces/landing.test.tsx`; `docs/manual-checks/dashboard-browser-check.js` (90) |
+| Isolation tests pass | PASS | `backend/tests/test_tenant_isolation.py` (46), `test_workspace_concurrency.py`; `docs/manual-checks/workspace-browser-check.js` (14) |
+
+**Still open before any deployment**
+
+Must fix:
+
+- `ENVIRONMENT` defaults to `development`: unset in production, every production check is skipped. Owner decision pending.
+- No edge proxy: uvicorn needs `--no-proxy-headers` and a proxy that appends to `X-Forwarded-For`, or all users share one throttling bucket. The client-IP source stays **Suspected** (audit 6.1) until a hosting target is chosen.
+- The pre-launch security audit has not been run (owner starts it).
+- No CI, deployment instructions, backups or monitoring (Phase 6).
+
+Known gaps to fix or accept:
+
+- Auth: expired-session cleanup, a cap on sessions, 503 instead of 500 on a database outage, the standard error body on 413, a cap on concurrent password hashing, a `__Host-` cookie name, refusing a localhost `ALLOWED_ORIGINS` in production, CAPTCHA on signup.
+- No email service: no verification and no password reset.
+- Account deletion does not exist. When it does, it must protect a workspace's last owner.
+- A distributed attacker can hold one account at the 50-failure ceiling (accepted).
+- Workspaces: nobody can be invited; rename, leave, role changes and removal have an API but no screen. Promoting a member who owns 20 workspaces reveals that fact; a member removed mid-request can receive the member list once.
+- Frontend: the Slice 1.4 follow-ups below.
 
 ## Slice log
 
@@ -175,3 +203,31 @@
 - **`/verify`:** runs on Windows now. `.gstack/pregate.json` points it at `scripts/run_tests.py`, which uses `backend/.venv` and runs each suite from its own folder. gstack reads that file from `origin/main`, so it applies once pushed. A test fails when a test file is missing from its mapping: add new test files there.
 - **Commit / push:** `8d9e0fc` (backend), `bb657cd` (frontend and browser check), `4591457` (docs); review fixes and tooling follow. Pushed to `origin/main` together.
 - **Next smallest task:** Slice 1.4 — dashboard shell
+
+### Slice 1.4 — Dashboard shell
+- **Date:** 2026-11-24
+- **What changed:** One layout for all signed-in pages (sidebar on laptop, the same column behind a menu button below that) with a workspace switcher, Dashboard, Settings, Account and sign out. Sign-in and registration open the last-used workspace, or the first, or the create form. The dashboard shows the role and member count from the API and says agents are not available yet. Settings holds the existing member list and owner-only delete. The home page offers "Go to dashboard" when signed in. No backend or schema change.
+- **Plan:** `docs/plans/2026-11-24-0927-feat-dashboard-shell-plan.md`
+- **Last-used workspace:** browser storage, key contains the user id, value is the workspace id, nothing else. It survives sign-out, grants nothing, and blocked storage is tolerated (unit and browser tested).
+- **Files/modules affected:** `frontend/src/features/{shell,workspaces,auth}/`, `frontend/src/app/`, `frontend/src/components/`, `frontend/src/lib/{lastWorkspace,usePageRouter}.ts`, `docs/manual-checks/`, `.gstack/pregate.json`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Frontend | PASS (73) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
+| Test sensitivity | PASS (14 of 14 caught) | broke one guard at a time | Request order, remembered value, account change, session end, Back restore, focus, storage key, late navigation |
+| Browser checks through the real proxy | PASS (90 + 21 + 14) | commands in `README.md` | Dashboard check: axe-core at 320, 375, 768 and 1280 px and in dark mode, keyboard, no horizontal scroll, server failure, blocked storage |
+| Backend with real DB | PASS (292) | `.venv\Scripts\python -m pytest` | Unchanged; re-run for the exit gate |
+| Backend lint, format, `alembic check` | PASS | | |
+
+- **Review:** one focused Claude reviewer (frontend and accessibility). No P0/P1. All five P2 findings fixed: a late answer could navigate someone off the page they moved to; layout and page could show two accounts after a sign-in in another tab; a page restored by Back could show signed-in data; no loading state between workspaces; switching workspace was not announced. Also fixed: focus lost on Retry, modified clicks, the sidebar disagreeing with a not-found page, page titles, delete wording, upper-case ids, test gaps. The fixes were tested but not re-reviewed. axe found two more, both fixed: sidebar content outside a landmark, and error screens without a heading.
+- **Known limitations / follow-ups:**
+  - If only the layout's refresh fails after creating a workspace, the switcher shows "None selected" until the next navigation or return to the tab.
+  - On the home page, focus is lost if the visitor has already tabbed to "Create account" when the session check answers.
+  - Back-restore protection is unit tested; the browser check cannot exercise it because Playwright's Chromium disables that cache.
+  - Returning to a tab refreshes the layout, not the page's own data, unless the account changed.
+  - Signing in always opens the dashboard, not the page where a session ended.
+  - No screen-reader software was run; keyboard checks of the menu run at phone width, of the switcher at laptop width.
+  - Browser checks leave throwaway `browser-check-*@example.com` users in the dev database.
+- **Commit / push:** `feat(dashboard)` and `docs` commits of 2026-11-24, pushed to `origin/main` together.
+- **Next smallest task:** Slice 2.1 — agent data model and APIs

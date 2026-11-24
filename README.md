@@ -4,7 +4,7 @@
 
 Agently is a multi-tenant SaaS where people create their own AI agents, give them instructions and private knowledge, and use them from one workspace. See [docs/PRODUCT_VISION.md](docs/PRODUCT_VISION.md) and [docs/MASTER_PRD.md](docs/MASTER_PRD.md). Current progress: [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-> Status: early development (Phase 1 — SaaS foundation). Accounts and workspaces work; agents do not exist yet.
+> Status: early development (Phase 1 — SaaS foundation). Accounts, workspaces and the dashboard work; agents do not exist yet.
 
 ## Repository layout
 
@@ -82,7 +82,7 @@ Open http://localhost:3000. The page shows a **System status** panel that report
 | `POST /api/auth/logout` | 204; revokes the session on the server and clears the cookie |
 | `GET /api/auth/me` | The signed-in user, or 401 |
 
-Pages: `/register`, `/login`, `/account`. State-changing requests need an `Origin` header listed in `ALLOWED_ORIGINS` (otherwise 403 `origin_rejected`), so `curl` and the interactive API docs on port 8000 are rejected unless you add that header or origin. Design: `docs/decisions/ADR-0003-session-authentication.md`.
+Pages: `/register`, `/login`, `/account`. Sign-in opens `/dashboard`, which redirects to the workspace last used in that browser (only its id is stored, under the user's id). State-changing requests need an `Origin` header listed in `ALLOWED_ORIGINS` (otherwise 403 `origin_rejected`), so `curl` and the interactive API docs on port 8000 are rejected unless you add that header or origin. Design: `docs/decisions/ADR-0003-session-authentication.md`.
 
 Auth settings are in `backend/.env.example`. If your `backend/.env` is older than Slice 1.2, the defaults work locally; add `SIGNUP_LIMIT_PER_IP=100` and `LOGIN_LIMIT_PER_IP=200` before re-running the browser check often. Production must set `ENVIRONMENT=production` (the default is `development`, which turns off the production checks), `ALLOWED_ORIGINS` and `TRUSTED_PROXY_HOPS`, and run uvicorn with `--no-proxy-headers`.
 
@@ -97,7 +97,7 @@ Auth settings are in `backend/.env.example`. If your `backend/.env` is older tha
 | `GET /api/workspaces/{id}/members` | member | List members |
 | `PATCH`, `DELETE /api/workspaces/{id}/members/{user_id}` | owner | Change role; remove |
 
-Non-members get 404, members without the owner role get 403, and breaking the last-owner or 20-workspace rule gets 409. Registration creates a personal workspace. People cannot be invited yet. Pages: `/workspaces`, `/workspaces/<id>`.
+Non-members get 404, members without the owner role get 403, and breaking the last-owner or 20-workspace rule gets 409. Registration creates a personal workspace. People cannot be invited yet. Pages: `/workspaces` (list and create), `/workspaces/<id>` (dashboard), `/workspaces/<id>/settings` (members, delete).
 
 API docs (non-production): http://localhost:8000/api/docs
 
@@ -123,11 +123,12 @@ npm run typecheck
 npm run build
 ```
 
-Browser checks of the auth and workspace journeys (frontend and backend running, from the repository root; needs the Playwright skill, adds nothing to the frontend):
+Browser checks of the auth, workspace and dashboard journeys (frontend and backend running, from the repository root; needs the Playwright skill, adds nothing to the frontend):
 
 ```powershell
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/auth-browser-check.js
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/workspace-browser-check.js
+node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/dashboard-browser-check.js
 ```
 
 ## Shutdown
