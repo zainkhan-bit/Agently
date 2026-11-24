@@ -1,11 +1,13 @@
 // Real-browser check of the signed-in layout: landing, navigation, screen sizes, accessibility.
 // Setup and how to run: see auth-browser-check.js. Run from the repository root, because axe-core
-// is read from frontend/node_modules. Each run registers one throwaway account.
+// is read from frontend/node_modules. Each run registers one throwaway account and
+// deletes it at the end.
 //
 //   node "<playwright-skill dir>/run.js" docs/manual-checks/dashboard-browser-check.js
 
 const path = require("path");
 const { chromium } = require("playwright");
+const deleteAccounts = require(path.resolve("docs/manual-checks/delete-accounts.js"));
 
 const BASE = process.env.BASE_URL || "http://localhost:3000";
 const AXE = path.resolve("frontend/node_modules/axe-core/axe.min.js");
@@ -15,6 +17,7 @@ const password = `check ${Math.random()} ${Math.random()}`;
 const longName = `Long${"w".repeat(90)}`;
 const SIZES = { narrow: [320, 640], mobile: [375, 700], tablet: [768, 1024], laptop: [1280, 800] };
 
+const registered = [];
 let failures = 0;
 function check(name, ok) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}`);
@@ -63,6 +66,7 @@ async function main(browser) {
   await page.goto(`${BASE}/register`, { waitUntil: "networkidle" });
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
+  registered.push(email);
   await page.getByRole("button", { name: "Create account" }).click();
   await heading("Personal workspace").waitFor();
   const first = page.url();
@@ -214,6 +218,7 @@ async function main(browser) {
     check(`journey completed (${error.message.split("\n")[0]})`, false);
   } finally {
     await browser.close();
+    check("the run's accounts are deleted", deleteAccounts(registered));
   }
   console.log(failures ? `${failures} check(s) FAILED` : "All checks passed");
   process.exitCode = failures ? 1 : 0;

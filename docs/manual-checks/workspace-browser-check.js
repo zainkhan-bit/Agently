@@ -1,14 +1,18 @@
 // Real-browser check of workspaces and tenant isolation through the Next.js /api proxy.
-// Setup and how to run: see auth-browser-check.js. Each run registers two throwaway accounts.
+// Setup and how to run: see auth-browser-check.js. Each run registers two throwaway accounts and
+// deletes them at the end.
 //
 //   node "<playwright-skill dir>/run.js" docs/manual-checks/workspace-browser-check.js
 
+const path = require("path");
 const { chromium } = require("playwright");
+const deleteAccounts = require(path.resolve("docs/manual-checks/delete-accounts.js"));
 
 const BASE = process.env.BASE_URL || "http://localhost:3000";
 const run = Date.now();
 const password = `check ${Math.random()} ${Math.random()}`;
 
+const registered = [];
 let failures = 0;
 function check(name, ok) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}`);
@@ -23,6 +27,7 @@ async function signUp(browser, name) {
   await page.goto(`${BASE}/register`, { waitUntil: "networkidle" });
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
+  registered.push(email);
   await page.getByRole("button", { name: "Create account" }).click();
   await page.waitForURL(/\/workspaces\/[0-9a-f-]{36}$/);
   await page.getByText(email).waitFor();
@@ -107,6 +112,7 @@ async function main(browser) {
     check(`journey completed (${error.message.split("\n")[0]})`, false);
   } finally {
     await browser.close();
+    check("the run's accounts are deleted", deleteAccounts(registered));
   }
   console.log(failures ? `${failures} check(s) FAILED` : "All checks passed");
   process.exitCode = failures ? 1 : 0;

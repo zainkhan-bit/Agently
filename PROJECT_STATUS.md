@@ -5,7 +5,6 @@
 
 ## Must fix before any deployment
 
-- **`ENVIRONMENT` defaults to `development`.** If it is unset in production, the Secure cookie guard and every other production check are skipped. Owner decision: default to `production`?
 - Run uvicorn with `--no-proxy-headers`, and put an edge proxy that appends to `X-Forwarded-For` in front (see Slice 1.2).
 
 ## Blocked / needs owner input
@@ -20,15 +19,14 @@ Checked 2026-11-24, after Slice 1.4. **All three gates pass locally.** There is 
 
 | Gate (`docs/ROADMAP.md`) | Result | Proof |
 |---|---|---|
-| Secure login | PASS | `backend/tests/test_auth_api.py`, `test_auth_throttling.py`, `test_origin_guard.py`, `test_route_inventory.py`; `docs/manual-checks/auth-browser-check.js` (21) |
-| Workspace dashboard | PASS | `frontend/src/features/shell/AppShell.test.tsx`, `frontend/src/features/workspaces/landing.test.tsx`; `docs/manual-checks/dashboard-browser-check.js` (90) |
-| Isolation tests pass | PASS | `backend/tests/test_tenant_isolation.py` (46), `test_workspace_concurrency.py`; `docs/manual-checks/workspace-browser-check.js` (14) |
+| Secure login | PASS | `backend/tests/test_auth_api.py`, `test_auth_throttling.py`, `test_origin_guard.py`, `test_route_inventory.py`; `docs/manual-checks/auth-browser-check.js` (22) |
+| Workspace dashboard | PASS | `frontend/src/features/shell/AppShell.test.tsx`, `frontend/src/features/workspaces/landing.test.tsx`; `docs/manual-checks/dashboard-browser-check.js` (91) |
+| Isolation tests pass | PASS | `backend/tests/test_tenant_isolation.py` (46), `test_workspace_concurrency.py`; `docs/manual-checks/workspace-browser-check.js` (15) |
 
 **Still open before any deployment**
 
 Must fix:
 
-- `ENVIRONMENT` defaults to `development`: unset in production, every production check is skipped. Owner decision pending.
 - No edge proxy: uvicorn needs `--no-proxy-headers` and a proxy that appends to `X-Forwarded-For`, or all users share one throttling bucket. The client-IP source stays **Suspected** (audit 6.1) until a hosting target is chosen.
 - The pre-launch security audit has not been run (owner starts it).
 - No CI, deployment instructions, backups or monitoring (Phase 6).
@@ -163,12 +161,12 @@ Known gaps to fix or accept:
 - **Review:** plan reviewed by six Claude reviewers. Code reviewed twice: first by two independent Claude reviewers, then, after those fixes, by the eleven `ce-code-review` reviewers (no P0/P1; no other-model reviewer was available). The implementing agent merged those findings itself instead of using the separate merge, validator and report steps. The simplify pass was not run. Fixed from review: uvicorn rewrote the client IP from `X-Forwarded-For` (real throttle bypass, reproduced in the browser check), SQL errors logged hashes, a lone-surrogate password returned 500, unlimited request bodies, IPv6 rotation, throttled attempts briefly counting against the account, a delete-order deadlock, seed host bypasses, and weak tests.
 - **Known limitations / follow-ups:**
   - Databases seeded before this slice still hold the demo user with the old published password. Delete that user and its Demo Workspace, then re-seed. Done for the local dev database on 2026-11-23.
-  - `ENVIRONMENT` defaults to `development`, so a deployment that forgets it gets no production checks. Owner decision: default to `production`?
+  - `ENVIRONMENT` defaults to `development`, so a deployment that forgets it gets no production checks. Fixed 2026-11-24: it defaults to `production`.
   - With Next.js as the only proxy, all users share one IP bucket (20 failed logins per 15 minutes, 5 signups per hour for everyone). Production needs an edge proxy that appends to `X-Forwarded-For`.
   - An attacker with several IPs can still reach the per-account ceiling of 50 and block that account's login while the attack lasts (accepted).
   - Not done: expired-session cleanup and a cap on active sessions, 503 instead of 500 on database outage in auth routes, the standard error format on a 413 (oversized body), a cap on concurrent password hashing (64 MiB each, up to 40 threads), a `__Host-` cookie name in production, CAPTCHA on signup (6.3), refusing a localhost `ALLOWED_ORIGINS` in production.
   - Emails are limited to printable ASCII.
-  - The browser check leaves throwaway `browser-check-*@example.com` users in the dev database.
+  - The browser check left throwaway users in the dev database. Fixed 2026-11-24.
 - **Not green:** gstack `/verify` could not run the backend tests on this machine: it calls `python3`, which is the Windows Store alias (`Python was not found`, exit 49). Its frontend lane passed. The same backend suite passes when run directly (table above).
 - **Commit / push:** `db4c4ae` (backend), `3070b54` (frontend and browser check) — pushed to `origin/main`; the docs commit follows.
 - **Next smallest task:** Slice 1.3 — workspace and membership
@@ -228,6 +226,12 @@ Known gaps to fix or accept:
   - Returning to a tab refreshes the layout, not the page's own data, unless the account changed.
   - Signing in always opens the dashboard, not the page where a session ended.
   - No screen-reader software was run; keyboard checks of the menu run at phone width, of the switcher at laptop width.
-  - Browser checks leave throwaway `browser-check-*@example.com` users in the dev database.
 - **Commit / push:** `feat(dashboard)` and `docs` commits of 2026-11-24, pushed to `origin/main` together.
 - **Next smallest task:** Slice 2.1 — agent data model and APIs
+
+### Follow-up — fail-safe ENVIRONMENT and browser-check cleanup
+- **Date:** 2026-11-24
+- **What changed:** `ENVIRONMENT` now defaults to `production` (owner decision). A blank value stops startup. `backend/.env.example` and the local `backend/.env` already set `development`; the test suite selects `development` itself when nothing is set. The browser checks delete the accounts they register, through `backend/scripts/delete_check_accounts.py` (only `browser-check-*@example.com`, only `ENVIRONMENT=development` with a local database). The 17 accounts left by earlier runs were deleted.
+- **Tests run / results:** backend 310 pass; without `backend/.env` 130 pass and 180 database tests SKIPPED; `ruff` clean. Restoring the old default fails 5 tests. Browser checks 91 + 22 + 15 pass, and only the demo user remains afterwards. Seed script runs.
+- **Known limitations:** one full run ended with a teardown error (`DROP DATABASE agently_test`: permission denied to terminate another role's process); later runs were clean. Cause not established. A browser check killed midway leaves its accounts: `python -m scripts.delete_check_accounts --all`.
+- **Next smallest task:** Slice 2.1 — agent data model and APIs (not started, waiting for the owner)

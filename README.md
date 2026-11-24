@@ -50,7 +50,7 @@ Copy-Item .env.example .env   # then edit DATABASE_URL
 .venv\Scripts\uvicorn app.main:app --reload --port 8000 --no-proxy-headers
 ```
 
-The seed script creates `demo@agently.local` with a random password that it prints once. It is safe to re-run, and refuses to run when `ENVIRONMENT=production` or when `DATABASE_URL` is not a local database. To get a new password, delete that user and its Demo Workspace, then run it again. **Databases seeded before Slice 1.2 still have the old published password**: do this on any you keep.
+The seed script creates `demo@agently.local` with a random password that it prints once. It is safe to re-run, and refuses to run when `ENVIRONMENT` is `production` or unset, or when `DATABASE_URL` is not a local database. To get a new password, delete that user and its Demo Workspace, then run it again. **Databases seeded before Slice 1.2 still have the old published password**: do this on any you keep.
 
 `--no-proxy-headers` is required: without it uvicorn lets a client choose its own IP address through `X-Forwarded-For`, which bypasses the login and signup limits. Schema and deletion rules: `docs/DATABASE_DESIGN.md`.
 
@@ -84,7 +84,7 @@ Open http://localhost:3000. The page shows a **System status** panel that report
 
 Pages: `/register`, `/login`, `/account`. Sign-in opens `/dashboard`, which redirects to the workspace last used in that browser (only its id is stored, under the user's id). State-changing requests need an `Origin` header listed in `ALLOWED_ORIGINS` (otherwise 403 `origin_rejected`), so `curl` and the interactive API docs on port 8000 are rejected unless you add that header or origin. Design: `docs/decisions/ADR-0003-session-authentication.md`.
 
-Auth settings are in `backend/.env.example`. If your `backend/.env` is older than Slice 1.2, the defaults work locally; add `SIGNUP_LIMIT_PER_IP=100` and `LOGIN_LIMIT_PER_IP=200` before re-running the browser check often. Production must set `ENVIRONMENT=production` (the default is `development`, which turns off the production checks), `ALLOWED_ORIGINS` and `TRUSTED_PROXY_HOPS`, and run uvicorn with `--no-proxy-headers`.
+Auth settings are in `backend/.env.example`. `ENVIRONMENT` defaults to `production` (fail safe), so `backend/.env` must set `ENVIRONMENT=development` for local work, as the example file does. If yours is older than Slice 1.2, also add `SIGNUP_LIMIT_PER_IP=100` and `LOGIN_LIMIT_PER_IP=200` before re-running the browser check often. Production must set `ALLOWED_ORIGINS` and `TRUSTED_PROXY_HOPS`, and run uvicorn with `--no-proxy-headers`.
 
 ## Workspace endpoints
 
@@ -123,7 +123,7 @@ npm run typecheck
 npm run build
 ```
 
-Browser checks of the auth, workspace and dashboard journeys (frontend and backend running, from the repository root; needs the Playwright skill, adds nothing to the frontend):
+Browser checks of the auth, workspace and dashboard journeys (frontend and backend running, from the repository root; needs the Playwright skill, adds nothing to the frontend). Each run deletes the accounts it registered; after an interrupted run, use `.venv\Scripts\python -m scripts.delete_check_accounts --all` from `backend/`:
 
 ```powershell
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/auth-browser-check.js

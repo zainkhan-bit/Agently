@@ -6,12 +6,15 @@
 //   node "<playwright-skill dir>/run.js" docs/manual-checks/auth-browser-check.js
 //
 // BASE_URL defaults to http://localhost:3000 and must be in the backend's ALLOWED_ORIGINS.
-// Each run registers one throwaway account, so the backend needs a development signup limit
+// Each run registers one throwaway account and deletes it at the end, so run against the local
+// development database. The signup is still counted, so the backend needs a development signup limit
 // (SIGNUP_LIMIT_PER_IP=100 and LOGIN_LIMIT_PER_IP=200, as in backend/.env.example) to be
 // re-run often.
 // EXPECT_SECURE=1 expects a Secure cookie (any ENVIRONMENT except development).
 
+const path = require("path");
 const { chromium } = require("playwright");
+const deleteAccounts = require(path.resolve("docs/manual-checks/delete-accounts.js"));
 
 const BASE = process.env.BASE_URL || "http://localhost:3000";
 const EXPECT_SECURE = process.env.EXPECT_SECURE === "1";
@@ -19,6 +22,7 @@ const COOKIE = process.env.COOKIE_NAME || "agently_session";
 const email = `browser-check-${Date.now()}@example.com`;
 const password = `check ${Math.random()} ${Math.random()}`;
 
+const registered = [];
 let failures = 0;
 function check(name, ok) {
   console.log(`${ok ? "PASS" : "FAIL"}  ${name}`);
@@ -40,6 +44,7 @@ async function main(browser) {
   const page = await context.newPage();
   const sessionCookie = async () => (await context.cookies()).find((c) => c.name === COOKIE);
 
+  registered.push(email);
   await submit(page, "/register", "Create account");
   check("register opens the dashboard", true);
 
@@ -128,6 +133,7 @@ async function main(browser) {
     check(`journey completed (${error.message.split("\n")[0]})`, false);
   } finally {
     await browser.close();
+    check("the run's accounts are deleted", deleteAccounts(registered));
   }
   console.log(failures ? `${failures} check(s) FAILED` : "All checks passed");
   process.exitCode = failures ? 1 : 0;

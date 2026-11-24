@@ -10,7 +10,7 @@ The MVP needs registration, login, logout, and session retrieval with revocation
 ## Decision
 
 - Passwords are hashed with **Argon2id** (`argon2-cffi`).
-- On login, the server generates a 256-bit random token, stores only its **SHA-256 hash** in a `sessions` table with `expires_at`, and sets it in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` in every environment except `development`; production refuses to start otherwise). Sessions last 14 days from creation and are never extended.
+- On login, the server generates a 256-bit random token, stores only its **SHA-256 hash** in a `sessions` table with `expires_at`, and sets it in an `HttpOnly`, `SameSite=Lax` cookie (`Secure` in every environment except `development`; production refuses to start otherwise, and an unset `ENVIRONMENT` means production). Sessions last 14 days from creation and are never extended.
 - Logout sets `revoked_at` on the session row, so revocation is immediate.
 - The frontend reaches the backend through a same-origin `/api` rewrite, keeping the cookie first-party.
 - CSRF: `SameSite=Lax` blocks cross-site POSTs from carrying the cookie; in addition, every state-changing request, including login and register, must carry exactly one `Origin` header from the `ALLOWED_ORIGINS` list. A missing header is rejected, and no other header substitutes for it.
