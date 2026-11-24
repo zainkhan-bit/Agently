@@ -7,6 +7,7 @@
       "backend/tests/test_auth_settings.py",
       "backend/tests/test_auth_throttling.py",
       "backend/tests/test_client_ip.py",
+      "backend/tests/test_db_drop.py",
       "backend/tests/test_db_guard.py",
       "backend/tests/test_db_session.py",
       "backend/tests/test_delete_check_accounts.py",

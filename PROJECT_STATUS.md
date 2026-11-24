@@ -233,5 +233,12 @@ Known gaps to fix or accept:
 - **Date:** 2026-11-24
 - **What changed:** `ENVIRONMENT` now defaults to `production` (owner decision). A blank value stops startup. `backend/.env.example` and the local `backend/.env` already set `development`; the test suite selects `development` itself when nothing is set. The browser checks delete the accounts they register, through `backend/scripts/delete_check_accounts.py` (only `browser-check-*@example.com`, only `ENVIRONMENT=development` with a local database). The 17 accounts left by earlier runs were deleted.
 - **Tests run / results:** backend 310 pass; without `backend/.env` 130 pass and 180 database tests SKIPPED; `ruff` clean. Restoring the old default fails 5 tests. Browser checks 91 + 22 + 15 pass, and only the demo user remains afterwards. Seed script runs.
-- **Known limitations:** one full run ended with a teardown error (`DROP DATABASE agently_test`: permission denied to terminate another role's process); later runs were clean. Cause not established. A browser check killed midway leaves its accounts: `python -m scripts.delete_check_accounts --all`.
+- **Known limitations:** one full run ended with a teardown error dropping `agently_test`; cause found and fixed below. A browser check killed midway leaves its accounts: `python -m scripts.delete_check_accounts --all`.
+- **Next smallest task:** Slice 2.1 — agent data model and APIs (not started, waiting for the owner)
+
+### Follow-up — reliable drop of the test databases
+- **Date:** 2026-11-24
+- **What changed:** `DROP DATABASE ... WITH (FORCE)` also tries to terminate other roles' processes, and a non-superuser may not terminate an autovacuum worker. The test helpers now end only client connections of the current role, then use a plain DROP (which stops autovacuum itself), up to 5 tries 0.5 s apart while the database is in use. The final error lists pid, backend_type, usename and application_name of each holder. No privileges granted. PostgreSQL hides backend_type of other roles' processes, so an autovacuum worker shows as `hidden` with usename `none`.
+- **Proof:** reproduced on PostgreSQL 18.6 with a real autovacuum worker: FORCE fails with the same error as before, the new drop succeeds. `backend/tests/test_db_drop.py` covers the filter; removing any of its four conditions fails the test.
+- **Tests run / results:** backend 316 pass, twice; without a database 133 pass and 183 SKIPPED; `ruff` clean.
 - **Next smallest task:** Slice 2.1 — agent data model and APIs (not started, waiting for the owner)

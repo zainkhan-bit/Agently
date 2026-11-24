@@ -16,7 +16,7 @@ tags: [pytest, postgresql, test-database, drop-guard, data-loss, alembic]
 
 ## Context
 
-Slice 1.1 made the test suite create and drop its own databases (`agently_test` per run, a fresh `agently_migrations_scratch` per migration test). It uses `DROP DATABASE ... WITH (FORCE)`, on the same PostgreSQL server that holds the dev `agently` database and other projects' databases (`urbanpulse`, `urbanpulse_test`). A mistake in this harness means permanent data loss on the owner's machine, so the owner required the dev database to be impossible to drop from tests.
+Slice 1.1 made the test suite create and drop its own databases (`agently_test` per run, a fresh `agently_migrations_scratch` per migration test). It ends its own role's client connections, then drops the database with retries (until 2026-11-24 it used `DROP DATABASE ... WITH (FORCE)`, which fails with "permission denied" when another role's process is connected), on the same PostgreSQL server that holds the dev `agently` database and other projects' databases (`urbanpulse`, `urbanpulse_test`). A mistake in this harness means permanent data loss on the owner's machine, so the owner required the dev database to be impossible to drop from tests.
 
 ## Guidance
 
@@ -36,7 +36,7 @@ The name guard looked complete, and an inline review passed it. The `?dbname=` b
 
 Known open limits, not fixed in Slice 1.1. Revisit them before they bite:
 
-- **Concurrent runs collide.** Fixed names plus `WITH (FORCE)` mean two pytest runs on one server drop each other's databases. The fix is per-run names that still end in `_test`/`_scratch`.
+- **Concurrent runs collide.** Fixed names plus ending existing connections mean two pytest runs on one server drop each other's databases. The fix is per-run names that still end in `_test`/`_scratch`.
 - **No host check.** If `DATABASE_URL` points at a shared or staging server whose role has `CREATEDB`, the suite creates and drops its two databases *there*.
 - **An all-skipped run still exits 0.** The loud summary line is the only signal, so CI must require the DB tests to actually run, for example with a strict mode that fails when they were skipped.
 - **Unmarked DB tests skip silently.** A test that uses the `database_url` fixture without `@pytest.mark.db` skips without being counted in the summary.

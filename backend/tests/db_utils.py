@@ -5,13 +5,35 @@ only ever touch databases whose names end in ``_test`` or ``_scratch``. The deve
 database (``agently``) can never be dropped from here.
 """
 
-from sqlalchemy import URL, create_engine, text
+import time
+
+from psycopg.errors import ObjectInUse
+from sqlalchemy import URL, Connection, create_engine, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 
 TEST_DATABASE_NAME = "agently_test"
 SCRATCH_DATABASE_NAME = "agently_migrations_scratch"
 DISPOSABLE_SUFFIXES = ("_test", "_scratch")
 MAINTENANCE_DATABASE = "postgres"
+DROP_TRIES = 5
+DROP_RETRY_SECONDS = 0.5
+
+# Not DROP ... WITH (FORCE): that also tries to terminate processes of other roles, such as an
+# autovacuum worker, and then fails with "permission denied". A plain DROP stops autovacuum itself.
+OWN_CLIENTS = text(
+    "SELECT pid FROM pg_stat_activity WHERE datname = :name"
+    " AND backend_type = 'client backend' AND usename = current_user AND pid <> pg_backend_pid()"
+)
+# backend_type is hidden (NULL) for other roles' processes.
+HOLDERS = text(
+    "SELECT pid, backend_type, usename, application_name FROM pg_stat_activity"
+    " WHERE datname = :name ORDER BY pid"
+)
+
+
+class DatabaseInUseError(RuntimeError):
+    """Raised when a throwaway database is still in use after every attempt to drop it."""
 
 
 class UnsafeDatabaseNameError(RuntimeError):
@@ -51,12 +73,44 @@ def _maintenance_engine(base_url: str | URL):
     )
 
 
+def own_client_pids(connection: Connection, name: str) -> list[int]:
+    return list(connection.scalars(OWN_CLIENTS, {"name": name}))
+
+
+def describe_holders(connection: Connection, name: str) -> str:
+    holders = [
+        f"pid {row.pid}: backend_type={row.backend_type or 'hidden'},"
+        f" usename={row.usename or 'none'}, application_name={row.application_name or 'none'}"
+        for row in connection.execute(HOLDERS, {"name": name})
+    ]
+    return "; ".join(holders) or "no process is listed any more"
+
+
+def drop_with_retries(connection: Connection, name: str) -> None:
+    assert_disposable_name(name)
+    for attempt in range(1, DROP_TRIES + 1):
+        for pid in own_client_pids(connection, name):
+            connection.execute(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
+        try:
+            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}"'))
+            return
+        except DBAPIError as error:
+            if not isinstance(error.orig, ObjectInUse):
+                raise
+            if attempt == DROP_TRIES:
+                raise DatabaseInUseError(
+                    f"could not drop {name!r} after {DROP_TRIES} tries, it is still in use by "
+                    + describe_holders(connection, name)
+                ) from error
+        time.sleep(DROP_RETRY_SECONDS)
+
+
 def drop_database(base_url: str | URL, name: str) -> None:
     assert_disposable_name(name)
     engine = _maintenance_engine(base_url)
     try:
         with engine.connect() as connection:
-            connection.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+            drop_with_retries(connection, name)
     finally:
         engine.dispose()
 
