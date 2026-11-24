@@ -4,7 +4,7 @@
 
 Agently is a multi-tenant SaaS where people create their own AI agents, give them instructions and private knowledge, and use them from one workspace. See [docs/PRODUCT_VISION.md](docs/PRODUCT_VISION.md) and [docs/MASTER_PRD.md](docs/MASTER_PRD.md). Current progress: [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
-> Status: early development (Phase 2 — agent creation). Accounts, workspaces and the dashboard work; agents have an API but no screens yet, and cannot run.
+> Status: early development (Phase 2 — agent creation). Accounts, workspaces and the dashboard work; agents can be created and managed under My Agents, but cannot run yet.
 
 ## Repository layout
 
@@ -115,7 +115,7 @@ Under `/api/workspaces/{id}/agents`. Any member may use them, except delete.
 | `POST /{agent_id}/pause`, `/resume`, `/archive`, `/restore` | Change status; archived agents are read-only and restore to paused |
 | `DELETE /{agent_id}` | Owners only, permanent (ADR-0005) |
 
-An agent outside the workspace in the path is a 404. An outdated edit, a disallowed status change, the 50-agent limit and the 200-version limit answer 409. Create, edit and duplicate share a limit of 60 requests per user per 10 minutes (429); invalid requests count, except bodies that are not JSON. Limits are in `backend/.env.example`. Models cannot be chosen yet.
+An agent outside the workspace in the path is a 404. An outdated edit, a disallowed status change, the 50-agent limit and the 200-version limit answer 409. Create, edit and duplicate share a limit of 60 requests per user per 10 minutes (429); invalid requests count, except bodies that are not JSON. Agent and workspace writes answer 503 `busy`, with nothing changed, when they wait more than 5 seconds for a lock, or when they stall for 30 seconds while holding one. Limits are in `backend/.env.example`. Models cannot be chosen yet.
 
 ## Tests and checks
 
@@ -145,6 +145,7 @@ Browser checks of the auth, workspace and dashboard journeys (frontend and backe
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/auth-browser-check.js
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/workspace-browser-check.js
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/dashboard-browser-check.js
+node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/agents-browser-check.js
 ```
 
 ## Shutdown

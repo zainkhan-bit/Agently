@@ -11,6 +11,7 @@ import type { User } from "@/features/auth/types";
 import type { Workspace } from "@/features/workspaces/types";
 import { ApiError, apiFetch, errorMessage } from "@/lib/api";
 import { writeLastWorkspace } from "@/lib/lastWorkspace";
+import { confirmLeave } from "@/lib/unsavedChanges";
 
 import { Sidebar } from "./Sidebar";
 
@@ -46,7 +47,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       result.status === "rejected" ? [result.reason as unknown] : [],
     );
     if (reasons.some((reason) => reason instanceof ApiError && reason.status === 401)) {
-      router.replace("/login");
+      // Declining keeps the typed text on screen, so that it can be copied.
+      if (confirmLeave()) router.replace("/login");
       return;
     }
     // A failed refresh keeps what is shown, unless somebody else is signed in now.

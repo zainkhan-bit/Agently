@@ -27,6 +27,7 @@ export function Sidebar({ user, workspaces, routeId, pathname, onNavigate }: Pro
   if (active) {
     links.unshift(
       { href: `/workspaces/${active.id}`, label: "Dashboard" },
+      { href: `/workspaces/${active.id}/agents`, label: "My Agents" },
       { href: `/workspaces/${active.id}/settings`, label: "Settings" },
     );
   } else if (workspaces.length > 0) {
@@ -39,13 +40,16 @@ export function Sidebar({ user, workspaces, routeId, pathname, onNavigate }: Pro
       <nav aria-label="Main">
         <ul className="flex flex-col">
           {links.map(({ href, label }) => {
-            const isCurrent = pathname === href;
+            const isPage = pathname === href;
+            // The pages of one agent belong to My Agents.
+            const isCurrent =
+              isPage || (href.endsWith("/agents") && pathname.startsWith(`${href}/`));
             return (
               <li key={href}>
                 <Link
                   href={href}
                   onClick={onNavigate}
-                  aria-current={isCurrent ? "page" : undefined}
+                  aria-current={isPage ? "page" : isCurrent ? "true" : undefined}
                   className={`block border-l-4 px-3 py-2 ${
                     isCurrent ? "border-current font-semibold" : "border-transparent"
                   }`}

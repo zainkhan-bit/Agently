@@ -2,6 +2,7 @@
 
 import { ErrorRetry } from "@/components/ErrorRetry";
 import { PageHeading } from "@/components/PageHeading";
+import { AgentCount } from "@/features/agents/AgentCount";
 
 import { useWorkspace } from "./useWorkspace";
 import { WorkspaceMissing } from "./WorkspaceMissing";
@@ -39,7 +40,7 @@ export function DashboardView({ id }: { id: string }) {
         <h2 id="agents-heading" className="font-semibold">
           Agents
         </h2>
-        <p>This workspace has no agents. Creating agents is not available yet.</p>
+        <AgentCount workspaceId={id} />
       </section>
     </div>
   );

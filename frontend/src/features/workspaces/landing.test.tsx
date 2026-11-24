@@ -22,6 +22,7 @@ beforeEach(() => {
     "/api/auth/me": () => Response.json({ id: "u1", email: "a@example.com" }),
     "/api/workspaces": () => Response.json([one, two]),
     "/api/workspaces/w2": () => Response.json(two),
+    "/api/workspaces/w2/agents?limit=1": () => Response.json({ items: [], total: 3 }),
     "/api/workspaces/w2/members": () =>
       Response.json([
         { user_id: "u1", email: "a@example.com", role: "member" },
@@ -91,15 +92,25 @@ describe("OpenDashboard", () => {
 });
 
 describe("DashboardView", () => {
-  it("shows this workspace's real values and no controls", async () => {
+  it("shows this workspace's real values and a link to its agents", async () => {
     render(<DashboardView id="w2" />);
     expect(screen.getByRole("status")).toHaveTextContent("Loading dashboard…");
     expect(await screen.findByRole("heading", { level: 1, name: "Two" })).toBeInTheDocument();
     expect(screen.getByText("Your role").nextSibling).toHaveTextContent("member");
     expect(screen.getByText("Members").nextSibling).toHaveTextContent("2");
-    expect(screen.getByText(/Creating agents is not available yet/)).toBeInTheDocument();
+    expect(await screen.findByText("3 current agents, archived not counted.")).toBeInTheDocument();
     expect(screen.queryByRole("button")).toBeNull();
-    expect(screen.queryByRole("link")).toBeNull();
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/workspaces/w2/agents");
+  });
+
+  it("stays usable when only the number of agents fails to load", async () => {
+    routes["/api/workspaces/w2/agents?limit=1"] = down;
+    render(<DashboardView id="w2" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("could not be loaded");
+    expect(screen.getByText("Members").nextSibling).toHaveTextContent("2");
+    routes["/api/workspaces/w2/agents?limit=1"] = () => Response.json({ items: [], total: 1 });
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(await screen.findByText("1 current agent, archived not counted.")).toBeInTheDocument();
   });
 
   it("shows not found instead of redirecting", async () => {

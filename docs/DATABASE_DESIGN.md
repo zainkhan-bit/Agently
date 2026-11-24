@@ -27,6 +27,8 @@ An agent's configuration lives only in its versions; `agents.current_version` sa
 
 **Lock order for every agent write:** workspace row (`FOR NO KEY UPDATE`), the caller's membership (`FOR SHARE`), then the agent (`FOR UPDATE`). Agent writes therefore take turns within a workspace. Deleting an agent locks like the owner actions below and then deletes. The write throttle commits, so it always runs before the first lock.
 
+**Write timeouts:** agent and workspace writes first set transaction-local `lock_timeout` (5 s for each lock) and `idle_in_transaction_session_timeout` (30 s), in `limit_write_time`. Waiters give up, and a stalled holder is ended and rolled back, both as 503 `busy`. A connection lost during COMMIT stays a 500, because the commit may have succeeded.
+
 ## Deletion behaviour (PRD DATA-1)
 
 Deletion is a **hard delete**. Rows are removed immediately: there are no `deleted_at` columns and no purge job. The database enforces the cascades with `ON DELETE CASCADE`, so they hold for ORM deletes and raw SQL alike:

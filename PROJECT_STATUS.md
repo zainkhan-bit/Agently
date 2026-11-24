@@ -1,7 +1,7 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 2 — Agent creation and configuration (Phase 1 exit gate met)
-**Next smallest task:** Slice 2.2 — My Agents interface
+**Next smallest task:** Slice 2.3 — Prompt-to-Agent builder
 
 ## Must fix before any deployment
 
@@ -263,7 +263,34 @@ Known gaps to fix or accept:
 - **Known limitations:**
   - AGT-3's chat error waits for Phase 3; only the run rule exists.
   - Bodies that are not JSON get 422 before any check and are not counted by the write limit. Requests refused with 404 are not counted either.
-  - Agent writes take turns within a workspace, and there is no lock timeout.
+  - Agent writes take turns within a workspace. There was no lock timeout until Slice 2.2.
   - No screens, no version history or rollback, no model choice.
 - **Commit / push:** `feat(agents)` commit of 2026-11-24, pushed to `origin/main`.
 - **Next smallest task:** Slice 2.2 — My Agents interface
+
+### Slice 2.2 — My Agents interface and write timeouts
+- **Date:** 2026-11-24
+- **What changed:** My Agents: list (current and archived), agent page with every action, one form for create and edit. Delete is offered to owners only and needs the typed name. Nothing changes on screen before the server confirms; an unclear outcome is said to be unclear. Conflicting edits keep the typed text and never overwrite. Live instructions counter with a client-side limit. Leaving with unsaved text asks first (close, reload, links, Back, sign out, ended session); no drafts. User text is plain text only (audit 5.2). The dashboard shows the real agent count. Agent and workspace writes give up after 5 s waiting for a lock, and the database ends one stalled for 30 s; both answer 503 `busy`.
+- **Plan:** `docs/plans/2026-11-24-1112-feat-my-agents-interface-plan.md`
+- **Files/modules affected:** `frontend/src/features/agents/`, `frontend/src/app/(app)/workspaces/[id]/agents/`, `frontend/src/lib/`, `frontend/src/features/{auth,shell,workspaces}/`, `backend/app/core/`, `backend/app/modules/workspaces/service.py`, tests, `docs/manual-checks/`, `.gstack/pregate.json`, docs
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (545) | `backend: .venv\Scripts\python -m pytest` | No skips |
+| Backend tests without DB | PASS (133) + SKIPPED (412) | `DATABASE_URL= .venv/Scripts/python -m pytest` (Git Bash) | |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Frontend | PASS (123) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
+| Browser checks, production build | PASS (116 + 99 + 22 + 15) | `docs/manual-checks/` | agents, dashboard, auth, workspace |
+| Test sensitivity | 22 of 22 caught | broke one guard at a time | Two were missed at first; both tests were fixed |
+
+- **Review:** one focused frontend and accessibility review by the implementing agent, so not independent. Fixed: links and buttons inside an alert region, focus lost on the count's Retry, unclear message when the agent is gone while saving.
+- **Known limitations:**
+  - The member view without delete is covered by component tests only: nobody can be invited yet.
+  - A different account signing in from another tab discards typed text without asking, so one account never sees another's.
+  - After a create, Back opens an empty create form.
+  - The lock timeout applies to each lock. On Windows the server's reason for closing a connection is lost, so any connection lost during a limited write, except at COMMIT, is reported as `busy`.
+  - Next.js can leave an unused second title element in the page; the tab title is correct.
+  - One browser-check run timed out waiting for Restore; not reproduced in 80 targeted repeats or the later full runs, cause unknown.
+- **Commit / push:** `feat(agents)` commit of 2026-11-24, pushed to `origin/main`.
+- **Next smallest task:** Slice 2.3 — Prompt-to-Agent builder

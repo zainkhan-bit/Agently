@@ -75,13 +75,21 @@ export async function apiFetch<T>(
   throw new ApiError(response.status, "unknown_error", "Request failed.");
 }
 
-/** POST JSON. The session cookie is HttpOnly: the browser sends it, scripts never see it. */
-export function apiPost<T>(path: string, body?: unknown): Promise<{ status: number; data: T }> {
+/** Send JSON. The session cookie is HttpOnly: the browser sends it, scripts never see it. */
+export function apiSend<T>(
+  method: "POST" | "PATCH",
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; data: T }> {
   return apiFetch<T>(path, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+}
+
+export function apiPost<T>(path: string, body?: unknown): Promise<{ status: number; data: T }> {
+  return apiSend<T>("POST", path, body);
 }
 
 /** Text to show for any failed request. */

@@ -127,7 +127,7 @@ async function main(browser) {
     check(`${size}: navigation moves focus to the new heading`, await heading("Workspace settings").evaluate((el) => el === document.activeElement));
     if (size !== "laptop") check(`${size}: navigation closes the menu`, !(await nav.isVisible()));
     await accessible(page, `${size} settings`);
-    for (const [target, title] of [["/workspaces", "Workspaces"], ["/account", "Account"], [`/workspaces/${crypto.randomUUID()}`, "Workspace not found"]]) {
+    for (const [target, title] of [[`${new URL(second).pathname}/agents`, "My Agents"], ["/workspaces", "Workspaces"], ["/account", "Account"], [`/workspaces/${crypto.randomUUID()}`, "Workspace not found"]]) {
       await page.goto(`${BASE}${target}`);
       await heading(title).waitFor();
       await accessible(page, `${size} ${title}`);

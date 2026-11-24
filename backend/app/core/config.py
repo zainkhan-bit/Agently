@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     agent_write_limit: int = Field(default=60, gt=0)
     agent_write_window_minutes: int = Field(default=10, gt=0)
 
+    # Agent and workspace writes: the wait for each lock, and idleness while holding locks.
+    write_lock_timeout_seconds: int = Field(default=5, gt=0, le=3600)
+    write_idle_timeout_seconds: int = Field(default=30, gt=0, le=3600)
+
     # Not env_ignore_empty: that would make an empty DATABASE_URL fall back to backend/.env.
     @field_validator("trusted_proxy_hops", "session_cookie_secure", mode="before")
     @classmethod

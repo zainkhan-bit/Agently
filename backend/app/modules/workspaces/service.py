@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from sqlalchemy import Row, delete, func, select, update
 from sqlalchemy.orm import Session
 
+from app.core.database import limit_write_time
 from app.core.errors import ConflictError, NotFoundError, PermissionDeniedError
 from app.modules.identity.models import User
 from app.modules.workspaces.models import Membership, Workspace
@@ -60,6 +61,7 @@ def add_workspace(db: Session, user_id: uuid.UUID, name: str) -> Workspace:
 
 
 def create_workspace(db: Session, user_id: uuid.UUID, name: str) -> Workspace:
+    limit_write_time(db)
     workspace = add_workspace(db, user_id, name)
     db.commit()
     return workspace
@@ -146,6 +148,8 @@ def lock_for_member_write(db: Session, context: WorkspaceContext) -> None:
 
 
 def _lock_workspace(db: Session, context: WorkspaceContext) -> None:
+    """Every write in an existing workspace starts here."""
+    limit_write_time(db)
     db.execute(
         select(Workspace.id)
         .where(Workspace.id == context.workspace.id)

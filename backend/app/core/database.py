@@ -4,10 +4,11 @@ import logging
 from collections.abc import Iterator
 from functools import lru_cache
 
-from sqlalchemy import Engine, MetaData, create_engine, text
+from sqlalchemy import Engine, ExceptionContext, MetaData, create_engine, event, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import get_settings
+from app.core.errors import BusyError
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,9 @@ NAMING_CONVENTION = {
     "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
     "pk": "pk_%(table_name)s",
 }
+
+
+LOCK_NOT_AVAILABLE = "55P03"
 
 
 class Base(DeclarativeBase):
@@ -62,6 +66,40 @@ def get_db() -> Iterator[Session]:
         raise
     finally:
         session.close()
+
+
+def limit_write_time(db: Session) -> None:
+    """Stop this transaction from waiting or idling forever. Call before taking its first lock.
+
+    The lock timeout ends a wait. The idle timeout ends a holder that stopped working, whose
+    waiters would otherwise all time out. Both last until the transaction ends, so the pooled
+    connection does not keep them. Either becomes BusyError.
+    """
+    settings = get_settings()
+    db.connection().execution_options(limited_write=True)  # this transaction's connection only
+    db.execute(
+        select(
+            func.set_config("lock_timeout", f"{settings.write_lock_timeout_seconds}s", True),
+            func.set_config(
+                "idle_in_transaction_session_timeout",
+                f"{settings.write_idle_timeout_seconds}s",
+                True,
+            ),
+        )
+    )
+
+
+@event.listens_for(Engine, "handle_error")
+def _busy_when_a_limited_write_times_out(context: ExceptionContext) -> None:
+    connection = context.connection
+    if connection is None or not connection.get_execution_options().get("limited_write"):
+        return
+    sqlstate = getattr(context.original_exception, "sqlstate", None)
+    # The idle timeout closes the connection, and on Windows the server's reason is lost, so any
+    # disconnect counts. Not during COMMIT (no statement): it may have succeeded.
+    if sqlstate == LOCK_NOT_AVAILABLE or (context.is_disconnect and context.statement):
+        logger.warning("write gave up (%s)", sqlstate or "connection closed")
+        raise BusyError() from context.original_exception
 
 
 def check_database() -> str:

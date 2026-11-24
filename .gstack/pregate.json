@@ -24,9 +24,11 @@
       "backend/tests/test_tenant_isolation.py",
       "backend/tests/test_throttle.py",
       "backend/tests/test_workspace_concurrency.py",
-      "backend/tests/test_workspaces_api.py"
+      "backend/tests/test_workspaces_api.py",
+      "backend/tests/test_write_timeouts.py"
     ],
     "frontend/**": [
+      "frontend/src/features/agents/agents.test.tsx",
       "frontend/src/features/auth/AccountView.test.tsx",
       "frontend/src/features/auth/AuthForm.test.tsx",
       "frontend/src/features/shell/AppShell.test.tsx",

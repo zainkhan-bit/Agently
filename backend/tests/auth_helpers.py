@@ -41,6 +41,8 @@ def configure(monkeypatch) -> Iterator[Callable[..., None]]:
         signup_limit_per_ip=100,
         agent_limit_per_workspace=50,
         agent_write_limit=1000,
+        write_lock_timeout_seconds=5,
+        write_idle_timeout_seconds=30,
         agent_write_window_minutes=10,
     )
     yield apply

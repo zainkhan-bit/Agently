@@ -56,6 +56,7 @@ describe("AppShell", () => {
     expect(switcher()).toHaveTextContent("Two");
     expect(links()).toEqual([
       ["Dashboard", "/workspaces/w2"],
+      ["My Agents", "/workspaces/w2/agents"],
       ["Settings", "/workspaces/w2/settings"],
       ["Account", "/account"],
     ]);

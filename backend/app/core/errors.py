@@ -60,6 +60,12 @@ class DependencyUnavailableError(AppError):
     message = "A required service is temporarily unavailable."
 
 
+class BusyError(AppError):
+    status_code = 503
+    code = "busy"
+    message = "The workspace is busy. Nothing was changed. Please try again."
+
+
 _HTTP_CODES = {
     400: "bad_request",
     401: "authentication_required",
