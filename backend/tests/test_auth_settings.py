@@ -1,9 +1,13 @@
 """Auth settings: safe defaults, and production refuses insecure configuration."""
 
+from pathlib import Path
+
 import pytest
+from pydantic import ValidationError
 
 from app.core.config import Settings, get_settings
 from app.main import create_app
+from scripts import delete_check_accounts, seed_dev
 
 
 def settings(**values) -> Settings:
@@ -54,6 +58,51 @@ def test_production_requires_an_explicit_proxy_hop_count(env, monkeypatch) -> No
     get_settings.cache_clear()
     with pytest.raises(RuntimeError, match="TRUSTED_PROXY_HOPS"):
         create_app()
+
+
+@pytest.fixture
+def unset_environment(env, monkeypatch):
+    """No ENVIRONMENT anywhere, as in a deployment that forgot it."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.delenv("SESSION_COOKIE_SECURE", raising=False)
+    monkeypatch.setitem(Settings.model_config, "env_file", None)
+    env(TRUSTED_PROXY_HOPS="1")
+
+
+def test_unset_environment_means_production(unset_environment) -> None:
+    assert get_settings().is_production
+    assert get_settings().session_cookie_is_secure
+    app = create_app()
+    assert app.docs_url is None and app.openapi_url is None
+
+
+def test_unset_environment_refuses_an_insecure_cookie(unset_environment, env) -> None:
+    env(SESSION_COOKIE_SECURE="false")
+    with pytest.raises(RuntimeError, match="SESSION_COOKIE_SECURE"):
+        create_app()
+
+
+def test_unset_environment_requires_a_proxy_hop_count(unset_environment, env) -> None:
+    env(TRUSTED_PROXY_HOPS="")
+    with pytest.raises(RuntimeError, match="TRUSTED_PROXY_HOPS"):
+        create_app()
+
+
+def test_blank_environment_does_not_start(unset_environment, env) -> None:
+    env(ENVIRONMENT="")
+    with pytest.raises(ValidationError):
+        create_app()
+
+
+@pytest.mark.parametrize("main", [seed_dev.main, lambda: delete_check_accounts.main(["--all"])])
+def test_unset_environment_stops_the_development_scripts(unset_environment, env, main) -> None:
+    env(DATABASE_URL="postgresql+psycopg://u:p@localhost:1/agently")
+    assert main() == 1
+
+
+def test_env_example_is_for_development() -> None:
+    example = Path(__file__).resolve().parents[1] / ".env.example"
+    assert "ENVIRONMENT=development" in example.read_text(encoding="utf-8").splitlines()
 
 
 def test_production_starts_when_configured(env) -> None:

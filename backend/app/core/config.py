@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     # Branding is centralised here (and in frontend/src/config/brand.ts).
     brand_name: str = "Agently"
 
-    environment: Literal["development", "test", "production"] = "development"
+    # Fail safe: forgetting to set it gets the production checks. Local .env sets development.
+    environment: Literal["development", "test", "production"] = "production"
     log_level: str = "INFO"
 
     # SecretStr keeps the password out of reprs/logs. None = not configured.
