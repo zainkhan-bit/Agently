@@ -49,7 +49,7 @@ export function AuthForm({ mode }: { mode: "register" | "login" }) {
         email: form.get("email"),
         password: form.get("password"),
       });
-      router.replace("/account");
+      router.replace("/dashboard");
     } catch (error) {
       // Only re-enabled on failure: after a success the form stays off until the page changes.
       setErrors(toErrors(error));

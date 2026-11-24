@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 import { buttonClass } from "@/components/buttonClass";
 import { ErrorRetry } from "@/components/ErrorRetry";
+import { PageHeading } from "@/components/PageHeading";
 import { ApiError, apiFetch, apiPost, errorMessage, fieldErrors } from "@/lib/api";
+import { usePageRouter } from "@/lib/usePageRouter";
 
 import type { Workspace } from "./types";
 
@@ -16,7 +17,7 @@ type State =
   | { kind: "error"; message: string };
 
 export function WorkspaceList() {
-  const router = useRouter();
+  const router = usePageRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
   const [nameError, setNameError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -58,14 +59,14 @@ export function WorkspaceList() {
     }
   }
 
-  if (state.kind === "loading") return <p>Loading workspaces…</p>;
+  if (state.kind === "loading") return <p role="status">Loading workspaces…</p>;
   if (state.kind === "error") {
     return <ErrorRetry message={state.message} onRetry={() => void load()} />;
   }
   const empty = state.workspaces.length === 0;
   return (
     <div className="flex flex-col gap-6">
-      <h1 className="text-2xl font-bold">Workspaces</h1>
+      <PageHeading>Workspaces</PageHeading>
       {empty ? (
         <p>You have no workspaces yet. Create your first workspace.</p>
       ) : (

@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { WorkspaceList } from "./WorkspaceList";
-import { WorkspaceView } from "./WorkspaceView";
+import { WorkspaceSettings } from "./WorkspaceSettings";
 
 const router = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
@@ -79,6 +79,18 @@ describe("WorkspaceList", () => {
     expect(screen.getByRole("button", { name: "Create workspace" })).toBeEnabled();
   });
 
+  it("does not navigate when the answer arrives after leaving the page", async () => {
+    let answer!: (response: Response) => void;
+    routes["POST /api/workspaces"] = () => new Promise<Response>((resolve) => (answer = resolve));
+    const view = render(<WorkspaceList />);
+    fireEvent.click(await screen.findByRole("button", { name: "Create workspace" }));
+    await waitFor(() => expect(answer).toBeDefined());
+    view.unmount();
+    answer(Response.json(team, { status: 201 }));
+    await new Promise((resolve) => setTimeout(resolve));
+    expect(router.push).not.toHaveBeenCalled();
+  });
+
   it("goes to login when signed out", async () => {
     routes["GET /api/workspaces"] = () => fail(401, "authentication_required", "x");
     render(<WorkspaceList />);
@@ -104,30 +116,30 @@ describe("WorkspaceList", () => {
   });
 });
 
-describe("WorkspaceView", () => {
+describe("WorkspaceSettings", () => {
   it("shows the name, role and members", async () => {
-    render(<WorkspaceView id="w1" />);
-    expect(await screen.findByRole("heading", { name: "Team" })).toBeInTheDocument();
+    render(<WorkspaceSettings id="w1" />);
+    expect(await screen.findByText("Team")).toBeInTheDocument();
     expect(screen.getByText("Your role: owner")).toBeInTheDocument();
     expect(screen.getByText("a@example.com (owner)")).toBeInTheDocument();
   });
 
   it.each([404, 422])("shows not found for a %i", async (status) => {
     routes["GET /api/workspaces/w1"] = () => fail(status, "x", "x");
-    render(<WorkspaceView id="w1" />);
+    render(<WorkspaceSettings id="w1" />);
     expect(await screen.findByText("Workspace not found")).toBeInTheDocument();
   });
 
   it("cannot be steered to another endpoint by the id", async () => {
     routes["GET /api/workspaces/..%2Fauth%2Fme"] = () => fail(404, "x", "x");
     routes["GET /api/workspaces/..%2Fauth%2Fme/members"] = () => fail(404, "x", "x");
-    render(<WorkspaceView id="../auth/me" />);
+    render(<WorkspaceSettings id="../auth/me" />);
     expect(await screen.findByText("Workspace not found")).toBeInTheDocument();
   });
 
   it("deletes only after the exact name is typed", async () => {
     routes["DELETE /api/workspaces/w1"] = () => new Response(null, { status: 204 });
-    render(<WorkspaceView id="w1" />);
+    render(<WorkspaceSettings id="w1" />);
     const input = await screen.findByLabelText("Workspace name");
     const button = screen.getByRole("button", { name: "Delete permanently" });
     for (const wrong of ["", "team", "Team "]) {
@@ -136,12 +148,12 @@ describe("WorkspaceView", () => {
     }
     fireEvent.change(input, { target: { value: "Team" } });
     fireEvent.click(button);
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/workspaces"));
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/dashboard"));
   });
 
   it("stays and explains when deletion fails", async () => {
     routes["DELETE /api/workspaces/w1"] = () => fail(403, "permission_denied", "No permission.");
-    render(<WorkspaceView id="w1" />);
+    render(<WorkspaceSettings id="w1" />);
     const input = await screen.findByLabelText("Workspace name");
     fireEvent.change(input, { target: { value: "Team" } });
     fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
@@ -150,7 +162,7 @@ describe("WorkspaceView", () => {
   });
 
   async function tryToDelete() {
-    render(<WorkspaceView id="w1" />);
+    render(<WorkspaceSettings id="w1" />);
     const input = await screen.findByLabelText("Workspace name");
     fireEvent.change(input, { target: { value: "Team" } });
     fireEvent.click(screen.getByRole("button", { name: "Delete permanently" }));
@@ -163,15 +175,15 @@ describe("WorkspaceView", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
-  it("shows not found when the workspace is already gone", async () => {
+  it("leaves for the not-found page when the workspace is already gone", async () => {
     routes["DELETE /api/workspaces/w1"] = () => fail(404, "not_found", "x");
     await tryToDelete();
-    expect(await screen.findByText("Workspace not found")).toBeInTheDocument();
+    await waitFor(() => expect(router.replace).toHaveBeenCalledWith("/workspaces/w1"));
   });
 
   it("offers no delete to a member", async () => {
     routes["GET /api/workspaces/w1"] = () => Response.json({ ...team, role: "member" });
-    render(<WorkspaceView id="w1" />);
+    render(<WorkspaceSettings id="w1" />);
     expect(await screen.findByText("Your role: member")).toBeInTheDocument();
     expect(screen.queryByText("Delete workspace")).toBeNull();
   });

@@ -1,6 +1,5 @@
-import Link from "next/link";
-
 import { brand } from "@/config/brand";
+import { HomeNav } from "@/features/auth/HomeNav";
 import { ServiceStatus } from "@/features/system/ServiceStatus";
 
 export default function Home() {
@@ -11,14 +10,7 @@ export default function Home() {
         <p className="mt-2 text-xl">{brand.tagline}</p>
         <p className="mt-4 text-base opacity-80">{brand.description}</p>
       </header>
-      <nav className="flex gap-4">
-        <Link href="/register" className="underline">
-          Create account
-        </Link>
-        <Link href="/login" className="underline">
-          Sign in
-        </Link>
-      </nav>
+      <HomeNav />
       <ServiceStatus />
     </main>
   );

@@ -25,7 +25,9 @@
     "frontend/**": [
       "frontend/src/features/auth/AccountView.test.tsx",
       "frontend/src/features/auth/AuthForm.test.tsx",
+      "frontend/src/features/shell/AppShell.test.tsx",
       "frontend/src/features/system/ServiceStatus.test.tsx",
+      "frontend/src/features/workspaces/landing.test.tsx",
       "frontend/src/features/workspaces/workspaces.test.tsx"
     ],
     "scripts/run_tests.py": [

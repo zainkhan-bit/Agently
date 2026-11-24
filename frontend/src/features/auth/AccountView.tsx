@@ -1,12 +1,14 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-import { buttonClass } from "@/components/buttonClass";
 import { ErrorRetry } from "@/components/ErrorRetry";
-import { ApiError, apiFetch, apiPost, errorMessage } from "@/lib/api";
+import { PageHeading } from "@/components/PageHeading";
+import { ApiError, apiFetch, errorMessage } from "@/lib/api";
+import { usePageRouter } from "@/lib/usePageRouter";
+
+import { SignOutButton } from "./SignOutButton";
+import type { User } from "./types";
 
 type State =
   | { kind: "loading" }
@@ -14,15 +16,13 @@ type State =
   | { kind: "error"; message: string };
 
 export function AccountView() {
-  const router = useRouter();
+  const router = usePageRouter();
   const [state, setState] = useState<State>({ kind: "loading" });
-  const [signOutError, setSignOutError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
 
   const load = useCallback(async () => {
     setState({ kind: "loading" });
     try {
-      const { data } = await apiFetch<{ email: string }>("/auth/me", { cache: "no-store" });
+      const { data } = await apiFetch<User>("/auth/me", { cache: "no-store" });
       setState({ kind: "signedIn", email: data.email });
     } catch (error) {
       // Only a 401 means signed out. Anything else must not look like it.
@@ -35,38 +35,15 @@ export function AccountView() {
     void load();
   }, [load]);
 
-  async function signOut() {
-    setPending(true);
-    setSignOutError(null);
-    try {
-      await apiPost("/auth/logout");
-      router.replace("/login");
-    } catch {
-      setSignOutError("Could not confirm sign out. You may still be signed in. Please try again.");
-      setPending(false);
-    }
-  }
-
-  if (state.kind === "loading") return <p>Checking your session…</p>;
+  if (state.kind === "loading") return <p role="status">Checking your session…</p>;
   if (state.kind === "error") {
     return <ErrorRetry message={state.message} onRetry={() => void load()} />;
   }
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-2xl font-bold">Account</h1>
+      <PageHeading>Account</PageHeading>
       <p className="break-words">Signed in as {state.email}</p>
-      <Link href="/workspaces" className="underline">
-        Workspaces
-      </Link>
-      {signOutError && <p role="alert">{signOutError}</p>}
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() => void signOut()}
-        className={buttonClass}
-      >
-        Sign out
-      </button>
+      <SignOutButton />
     </div>
   );
 }

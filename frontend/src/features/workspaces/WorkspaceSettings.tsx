@@ -1,60 +1,33 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 
 import { buttonClass } from "@/components/buttonClass";
 import { ErrorRetry } from "@/components/ErrorRetry";
+import { PageHeading } from "@/components/PageHeading";
 import { ApiError, apiFetch, errorMessage } from "@/lib/api";
+import { usePageRouter } from "@/lib/usePageRouter";
 
-import type { Member, Workspace } from "./types";
+import { useWorkspace } from "./useWorkspace";
+import { WorkspaceMissing } from "./WorkspaceMissing";
 
-type State =
-  | { kind: "loading" }
-  | { kind: "ready"; workspace: Workspace; members: Member[] }
-  | { kind: "missing" }
-  | { kind: "error"; message: string };
-
-export function WorkspaceView({ id }: { id: string }) {
-  const router = useRouter();
-  const path = `/workspaces/${encodeURIComponent(id)}`;
-  const [state, setState] = useState<State>({ kind: "loading" });
+export function WorkspaceSettings({ id }: { id: string }) {
+  const router = usePageRouter();
+  const { path, state, load } = useWorkspace(id);
   const [typedName, setTypedName] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-
-  const load = useCallback(async () => {
-    setState({ kind: "loading" });
-    try {
-      const [workspace, members] = await Promise.all([
-        apiFetch<Workspace>(path, { cache: "no-store" }),
-        apiFetch<Member[]>(`${path}/members`, { cache: "no-store" }),
-      ]);
-      setState({ kind: "ready", workspace: workspace.data, members: members.data });
-    } catch (error) {
-      const status = error instanceof ApiError ? error.status : 0;
-      if (status === 401) router.replace("/login");
-      // 422 is a malformed id: to the person it is simply not a workspace.
-      else if (status === 404 || status === 422) setState({ kind: "missing" });
-      else setState({ kind: "error", message: errorMessage(error) });
-    }
-  }, [path, router]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   async function remove() {
     setPending(true);
     setDeleteError(null);
     try {
       await apiFetch(path, { method: "DELETE" });
-      router.replace("/workspaces");
+      router.replace("/dashboard");
     } catch (error) {
       const status = error instanceof ApiError ? error.status : 0;
       if (status === 401) router.replace("/login");
-      else if (status === 404) setState({ kind: "missing" }); // deleted, or no longer a member
+      else if (status === 404) router.replace(path); // already gone: not found there, and the layout refreshes
       else {
         setDeleteError(errorMessage(error));
         setPending(false);
@@ -62,29 +35,16 @@ export function WorkspaceView({ id }: { id: string }) {
     }
   }
 
-  const back = (
-    <Link href="/workspaces" className="underline">
-      All workspaces
-    </Link>
-  );
-  if (state.kind === "loading") return <p>Loading workspace…</p>;
-  if (state.kind === "missing") {
-    return (
-      <div className="flex flex-col gap-4">
-        <h1 className="text-2xl font-bold">Workspace not found</h1>
-        <p>It does not exist, or you are not a member.</p>
-        {back}
-      </div>
-    );
-  }
+  if (state.kind === "loading") return <p role="status">Loading settings…</p>;
+  if (state.kind === "missing") return <WorkspaceMissing />;
   if (state.kind === "error") {
     return <ErrorRetry message={state.message} onRetry={() => void load()} />;
   }
   const { workspace, members } = state;
   return (
     <div className="flex flex-col gap-6">
-      {back}
-      <h1 className="text-2xl font-bold break-words whitespace-pre-wrap">{workspace.name}</h1>
+      <PageHeading title={`Settings: ${workspace.name}`}>Workspace settings</PageHeading>
+      <p className="break-words whitespace-pre-wrap">{workspace.name}</p>
       <p>Your role: {workspace.role}</p>
       <section aria-labelledby="members-heading">
         <h2 id="members-heading" className="font-semibold">
@@ -103,7 +63,7 @@ export function WorkspaceView({ id }: { id: string }) {
           <h2 id="delete-heading" className="font-semibold">
             Delete workspace
           </h2>
-          <p>This is permanent. Type the workspace name to confirm.</p>
+          <p>This permanently deletes the workspace and everyone&apos;s access to it. Accounts are kept. Type the workspace name to confirm.</p>
           <label className="flex flex-col gap-1">
             Workspace name
             <input

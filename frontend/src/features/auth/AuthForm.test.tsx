@@ -44,11 +44,11 @@ afterEach(() => {
 });
 
 describe("AuthForm", () => {
-  it("registers with same-origin JSON and opens the account page", async () => {
+  it("registers with same-origin JSON and opens the dashboard", async () => {
     const fetchMock = respond(json(201, { id: "1", email: "a@example.com" }));
     render(<AuthForm mode="register" />);
     submit("Create account");
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/account"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("/api/auth/register");
     expect(init).toMatchObject({ method: "POST", credentials: "same-origin" });
@@ -60,7 +60,7 @@ describe("AuthForm", () => {
     respond(json(200, { id: "1", email: "a@example.com" }));
     render(<AuthForm mode="login" />);
     submit("Sign in");
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/account"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
     expect(localStorage.length).toBe(0);
     expect(sessionStorage.length).toBe(0);
   });
@@ -110,7 +110,7 @@ describe("AuthForm", () => {
     await screen.findByRole("alert");
     fetchMock.mockResolvedValueOnce(json(200, {}));
     submit("Sign in");
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/account"));
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/dashboard"));
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 

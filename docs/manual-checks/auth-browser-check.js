@@ -30,7 +30,8 @@ async function submit(page, path, button) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: button }).click();
-  await page.getByText(`Signed in as ${email}`).waitFor();
+  await page.waitForURL(/\/workspaces\/[0-9a-f-]{36}$/);
+  await page.getByText(email).waitFor({ state: "attached" });
 }
 
 async function main(browser) {
@@ -40,8 +41,10 @@ async function main(browser) {
   const sessionCookie = async () => (await context.cookies()).find((c) => c.name === COOKIE);
 
   await submit(page, "/register", "Create account");
-  check("register opens the signed-in view", page.url() === `${BASE}/account`);
+  check("register opens the dashboard", true);
 
+  await page.goto(`${BASE}/account`);
+  await page.getByText(`Signed in as ${email}`).waitFor();
   await page.reload();
   await page.getByText(`Signed in as ${email}`).waitFor();
   check("session survives a reload", true);
@@ -91,7 +94,7 @@ async function main(browser) {
     fetch(`${BASE}/api/auth/me`, { headers: { Cookie: `${COOKIE}=${cookie.value}` } });
   check("the cookie works outside the browser before sign out", (await replayOldCookie()).ok);
 
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.locator("main").getByRole("button", { name: "Sign out" }).click();
   await page.waitForURL(`${BASE}/login`);
   check("sign out opens the login page", true);
   check("sign out clears the cookie", !(await sessionCookie()));

@@ -24,7 +24,8 @@ async function signUp(browser, name) {
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Create account" }).click();
-  await page.getByText(`Signed in as ${email}`).waitFor();
+  await page.waitForURL(/\/workspaces\/[0-9a-f-]{36}$/);
+  await page.getByText(email).waitFor();
   return { context, page, email };
 }
 
@@ -37,21 +38,23 @@ async function noOverflow(page) {
 
 async function main(browser) {
   const a = await signUp(browser, "a");
-  await a.page.getByRole("link", { name: "Workspaces" }).click();
-  await a.page.getByRole("link", { name: "Personal workspace" }).waitFor();
+  await a.page.getByRole("heading", { name: "Personal workspace" }).waitFor();
   check("a new account has a personal workspace", true);
 
+  await a.page.goto(`${BASE}/workspaces`);
   const name = `Private ${run} ${"x".repeat(70)}`;
   await a.page.getByLabel("New workspace name").fill(name);
   await a.page.getByRole("button", { name: "Create workspace" }).click();
   await a.page.getByRole("heading", { name }).waitFor();
   const url = a.page.url();
   check("creating opens the new workspace", /\/workspaces\/[0-9a-f-]{36}$/.test(url));
+  await a.page.goto(`${url}/settings`);
+  await a.page.getByText(`${a.email} (owner)`).waitFor();
   check("its member list shows the owner", await a.page.getByText(`${a.email} (owner)`).isVisible());
   check("no horizontal scroll at phone width", await noOverflow(a.page));
 
   const b = await signUp(browser, "b");
-  await b.page.goto(url);
+  await b.page.goto(`${url}/settings`);
   await b.page.getByText("Workspace not found").waitFor();
   const html = await b.page.content();
   check("another account sees 'not found'", true);
@@ -71,20 +74,21 @@ async function main(browser) {
     attempts.every((response) => response.status() === 404),
   );
   await b.page.goto(`${BASE}/workspaces`);
-  await b.page.getByRole("link", { name: "Personal workspace" }).waitFor();
+  await b.page.locator("main").getByRole("link", { name: "Personal workspace" }).waitFor();
   check("and does not see it listed", !(await b.page.content()).includes(name));
   check("no horizontal scroll on the list", await noOverflow(b.page));
 
-  await a.page.reload();
+  await a.page.goto(url);
   await a.page.getByRole("heading", { name }).waitFor();
+  await a.page.goto(`${url}/settings`);
+  await a.page.getByLabel("Workspace name").waitFor();
   check("the workspace is unchanged", true);
   const button = a.page.getByRole("button", { name: "Delete permanently" });
   check("delete is off until the name is typed", await button.isDisabled());
   await a.page.getByLabel("Workspace name").fill(name);
   await button.click();
-  await a.page.waitForURL(`${BASE}/workspaces`);
-  await a.page.getByRole("link", { name: "Personal workspace" }).waitFor();
-  check("deleting returns to the list without it", !(await a.page.content()).includes(name));
+  await a.page.getByRole("heading", { name: "Personal workspace" }).waitFor();
+  check("deleting opens another workspace, without it", !(await a.page.content()).includes(name));
   await a.page.goto(url);
   await a.page.getByText("Workspace not found").waitFor();
   check("the deleted workspace is gone", true);
