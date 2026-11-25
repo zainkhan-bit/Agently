@@ -7,6 +7,7 @@ from fastapi import Depends
 
 from app.core.config import get_settings
 from app.core.database import get_session_factory
+from app.core.errors import ConflictError
 from app.modules.providers.contract import Provider
 from app.modules.providers.gemini import GeminiProvider
 from app.modules.providers.mock import MockProvider
@@ -38,6 +39,22 @@ def current_disclosure() -> Disclosure:
     if settings.model_provider != "gemini":
         return "none"
     return "gemini_paid" if settings.gemini_tier == "paid" else "gemini_free"
+
+
+def current_model() -> str:
+    settings = get_settings()
+    return settings.gemini_model if settings.model_provider == "gemini" else "mock"
+
+
+class DisclosureChangedError(ConflictError):
+    code = "disclosure_changed"
+    message = "Who receives what you type has changed. It was not sent. Read the notice first."
+
+
+def check_disclosure(shown: str) -> None:
+    """Nothing goes to anyone the person was not told about."""
+    if shown != current_disclosure():
+        raise DisclosureChangedError()
 
 
 CurrentProvider = Annotated[Provider | None, Depends(get_provider)]

@@ -12,6 +12,7 @@ from app.modules.agent_builder import router as agent_builder
 from app.modules.agents import router as agents
 from app.modules.conversations import router as conversations
 from app.modules.identity import router as identity
+from app.modules.runtime import router as runtime
 from app.modules.workspaces import router as workspaces
 
 
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(workspaces.router, prefix="/api")
     app.include_router(agents.router, prefix="/api")
     app.include_router(conversations.router, prefix="/api")
+    app.include_router(runtime.router, prefix="/api")
     app.include_router(agent_builder.router, prefix="/api")
     return app
 

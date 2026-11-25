@@ -79,7 +79,9 @@ All errors use `{"error": {"code": "<stable_code>", "message": "<safe text>", "d
 - No database connection is held during the call, and at most 8 calls run at once per process. Answers, prompts, output and provider errors are neither stored nor logged.
 - Schema checks cannot judge what instructions say. The person's review does, and agents have no permissions a draft could grant.
 
-`app/modules/conversations` keeps private conversations (ADR-0005). `get_conversation` is the only way for a request to reach one, and it requires the creator; the isolation matrix fails for a route that names anything outside the shared ids without it, and lets teammates of both roles attack. No route accepts messages: `store_message` is internal. Responses are `private, no-store`.
+`app/modules/conversations` keeps private conversations (ADR-0005). `get_conversation` is the only way for a request to reach one, and it requires the creator; the isolation matrix fails for a route that names anything outside the shared ids without it, and lets teammates of both roles attack. `store_message` is internal: routes cannot choose a role or version. Responses are `private, no-store`.
+
+`app/modules/runtime` answers messages: `docs/AI_RUNTIME.md`.
 
 ## 8. Configuration and secrets
 

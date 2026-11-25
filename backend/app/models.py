@@ -5,6 +5,7 @@ from app.modules.agents.models import Agent, AgentVersion
 from app.modules.conversations.models import Conversation, StoredMessage
 from app.modules.identity.models import AuthThrottleEvent, User, UserSession
 from app.modules.providers.tables import ProviderSpend
+from app.modules.runtime.models import Execution
 from app.modules.workspaces.models import Membership, Workspace
 
 __all__ = [
@@ -13,6 +14,7 @@ __all__ = [
     "AuthThrottleEvent",
     "Base",
     "Conversation",
+    "Execution",
     "Membership",
     "ProviderSpend",
     "StoredMessage",

@@ -22,7 +22,8 @@ PostgreSQL 16+ (developed on 18), SQLAlchemy 2.x models, Alembic migrations. Mod
 | `auth_throttle_events` | Counted login, signup and agent-write attempts | One row per attempt and limit. `key_hash` is a SHA-256 of the scope plus normalised email and/or IP, or the user id for agent writes; no plaintext email. `created_at` is set by the application. Rows older than the longest throttle window are deleted whenever a new attempt is recorded, so the table stays bounded. Not linked to `users`: unknown emails are counted too. |
 | `provider_spend` | What real provider calls cost (ADR-0006) | One row per call, in nano-dollars: the worst case until the call succeeds, then the real cost with its token counts, or zero for a call that was never sent or was refused unworked. Holds no text and names no person or workspace. Never cleaned up; deleting rows raises what may be spent. |
 | `conversations` | One person's private conversation with one agent | Composite foreign keys, both cascading: `(agent_id, workspace_id)` to the agent of that workspace and `(user_id, workspace_id)` to the person's membership. `message_count` is also the last sequence number. `updated_at` is the last message. |
-| `messages` | Private text | Unique `(conversation_id, sequence)`, which also serves "the last N". `role` is `user` or `assistant`. `agent_version` is set for assistant messages and only for them (check), and is an existing version of the same agent (composite foreign key, cascading). Never changed after it is written. |
+| `messages` | Private text | Unique `(conversation_id, sequence)`, which also serves "the last N". `role` is `user` or `assistant`. `agent_version` is set for assistant messages and only for them (check), and is an existing version of the same agent (composite foreign key, cascading). Never changed after it is written. `request_id` is set for what a person sent and unique per conversation. |
+| `executions` | One attempt to answer a message (`docs/AI_RUNTIME.md`) | Composite foreign keys, all cascading: conversation and agent, message, answer, and the agent's version. Checks: `succeeded` exactly when there is an answer, finished unless `running`. Partial unique indexes: one running row per conversation, one success per message. Holds no text; unknown tokens stay empty. |
 
 ## Agents
 
@@ -43,8 +44,8 @@ Message text must not reach logs. Parameters are hidden (`hide_parameters`), the
 Deletion is a **hard delete**. Rows are removed immediately: there are no `deleted_at` columns and no purge job. The database enforces the cascades with `ON DELETE CASCADE`, so they hold for ORM deletes and raw SQL alike:
 
 - Deleting a **workspace** deletes its memberships, agents, their versions and conversations. Its users remain.
-- Deleting an **agent** (owners only, any status) deletes its versions and everyone's conversations with it. Later its executions too; usage rows survive (ADR-0005).
-- Deleting a **conversation** (its creator only) deletes its messages. Nothing expires with age.
+- Deleting an **agent** (owners only, any status) deletes its versions and everyone's conversations with it, executions included; usage rows survive (ADR-0005). `provider_spend` names no agent and stays.
+- Deleting a **conversation** (its creator only) deletes its messages and executions. Nothing expires with age.
 - Ending a **membership** (leaving or removal) deletes that person's conversations in the workspace.
 - Deleting a **user** deletes their sessions and memberships, and with those their conversations. The workspaces they belonged to remain. Agents and versions they created remain with an empty `created_by`.
 

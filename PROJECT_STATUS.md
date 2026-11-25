@@ -1,7 +1,7 @@
 # Project Status — Agently
 
-**Current milestone:** Phase 3: Slices 3.1 (Gemini adapter) and 3.2 (conversation storage) are done
-**Next smallest task:** Slice 3.3 — Runtime service without tools (mock only)
+**Current milestone:** Phase 3: Slices 3.1 to 3.3 are done; 3.3 is proven with the mock only
+**Next smallest task:** Slice 3.4 — Chat interface and streaming (on local branch `slice-3.4`, for the owner's review)
 
 ## Must fix before any deployment
 
@@ -30,6 +30,7 @@ Agreed with the owner on 2026-11-24. Built in Slice 3.1:
 - ~~Slice 1.1 blocked on local PostgreSQL credentials~~ — resolved 2026-11-21: `GET /api/health/ready` returns `database: ok`.
 - **Known gap (owner: the slice that adds account deletion):** it must refuse to delete a workspace's last owner, or transfer or delete the workspace first, with tests. Slice 1.3 enforces this for leaving, removal and demotion; account deletion does not exist in the app yet. Lock order and edge cases: `docs/DATABASE_DESIGN.md`.
 - The real-provider tests of Slices 2.3 and 3.1 passed on 2026-11-25.
+- **Slice 3.3, BLOCKED:** the runtime check with the real provider (one conversation, a retry, a cancelled answer). Needs the owner's yes.
 - **Slice 3.2, BLOCKED:** breaking one guard at a time. The run was stopped by the system for low memory before its first result, and must not be restarted without the owner.
 
 ## Phase 1 exit gate
@@ -457,3 +458,28 @@ The build guide words the gate further (Slice 2.4):
   - The list shows dates and counts only; titles are deferred.
 - **Commit / push:** `feat(conversations)` commit of 2026-11-26, pushed to `origin/main`.
 - **Next smallest task:** Slice 3.3 — Runtime service without tools
+
+### Slice 3.3 — Runtime service without tools
+- **Date:** 2026-11-26 (owner away)
+- **What changed:** `POST .../conversations/<id>/messages` stores the person's message, asks the model with the agent's current version and recent answered history, and stores the answer with that version. The agent's configuration is in the system message only; user messages are escaped inside tags. Repeating a request never duplicates a message or call. Every attempt has an `executions` record without text (migration `0007`). Closing a run cancels it. One answer at a time per conversation; 60 messages per person and 200 per workspace and hour.
+- **How it works:** `docs/AI_RUNTIME.md`. **Plan:** `docs/plans/2026-11-26-0240-feat-agent-runtime-plan.md`, with decisions and assumptions made while the owner was away.
+- **Files/modules affected:** `backend/app/modules/runtime/`, `backend/app/modules/{conversations,providers,agent_builder,identity}/`, `backend/app/core/config.py`, `backend/migrations/versions/0007_executions.py`, `backend/tests/`, `.gstack/pregate.json`, docs
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (1456) | `backend: .venv\Scripts\python -m pytest` | No skips |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Migration on dev DB | PASS | `alembic upgrade head`, `check`, `downgrade -1`, `upgrade head`, `check` | |
+| Test sensitivity | 37 of 43 caught | broke one guard at a time, in a copy outside the repository | One of them only after a weak cross-conversation test was fixed. The six survivors are redundant: the conversation key cascades too, joins already need an answer, Python closes an abandoned stream, store_message checks the text again |
+| Real provider | BLOCKED | | Mock only |
+
+- **Review:** one independent Claude reviewer (privacy, isolation, concurrency, money), by reading only. No P0 or P1. Fixed: unanswered messages used up the history window (P2); repeats of answered messages were refused by checks for new calls, text typed under one data notice was sent under another, a busy database claimed that nothing had changed, weak race tests (P3s). The fixes were not reviewed again.
+- **Known limitations:**
+  - P3, recorded: a crashed run's record says `running` until the next accepted message.
+  - P3, recorded: one person can hold all 8 answer slots of a process for a while.
+  - P3, recorded: lock waits plus the call can exceed the 30 seconds of the Next.js proxy. Repeating with the same id is safe.
+  - How a real model resists prompt injection is untested. Agents have no tools.
+  - The agent's instructions and a person's messages go to Google when Gemini is on.
+- **Commit / push:** `feat(runtime)` commit of 2026-11-26, pushed to `origin/main`.
+- **Next smallest task:** Slice 3.4

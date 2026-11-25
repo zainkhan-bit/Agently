@@ -1,6 +1,6 @@
 """A provider for development and tests. Deterministic, offline, and not an AI.
 
-It repeats the user's answers inside a draft, so hostile answers come back as hostile output.
+It repeats what people typed, so hostile text comes back as hostile output.
 """
 
 import html
@@ -13,6 +13,7 @@ from app.modules.providers.contract import (
     Message,
     ProviderError,
     ProviderRateLimitError,
+    ProviderRefusedError,
     ProviderTimeoutError,
     Stream,
     TextPiece,
@@ -21,10 +22,12 @@ from app.modules.providers.contract import (
 CHARACTERS_PER_TOKEN = 4
 CHARACTERS_PER_PIECE = 20
 _ANSWER = re.compile(r'<user_answer field="(\w+)">\n(.*?)\n</user_answer>', re.DOTALL)
+_CHAT = re.compile(r"<user_message>\n(.*)\n</user_message>", re.DOTALL)
 _FAILURES = {
     "timeout": ProviderTimeoutError,
     "rate_limited": ProviderRateLimitError,
     "unavailable": ProviderError,
+    "refused": ProviderRefusedError,
 }
 
 
@@ -55,6 +58,11 @@ class MockProvider:
         yield completion
 
     def _text(self, messages: Sequence[Message]) -> str:
+        chat = _CHAT.fullmatch(messages[-1].content)
+        if chat:
+            if self._scenario == "malformed":
+                return " \n "
+            return f"Sample answer, made without AI. You wrote:\n\n{html.unescape(chat[1])}"
         if self._scenario == "malformed":
             return "Sure! Here is your agent: {"
         prompt = messages[-1].content

@@ -27,6 +27,7 @@ class MessageOut(BaseModel):
     role: Literal["user", "assistant"]
     content: str = Field(repr=False)
     agent_version: int | None
+    request_id: uuid.UUID | None  # to repeat the request of a message that was never answered
     created_at: UtcDatetime
 
 

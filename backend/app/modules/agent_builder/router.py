@@ -6,7 +6,7 @@ from app.core.config import get_settings
 from app.modules.agent_builder import service
 from app.modules.agent_builder.schemas import Answers, BuilderStatus, DraftOut
 from app.modules.identity.dependencies import Db
-from app.modules.providers.selection import CurrentProvider, current_disclosure
+from app.modules.providers.selection import CurrentProvider, check_disclosure, current_disclosure
 from app.modules.workspaces.dependencies import MemberContext
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/agent-builder", tags=["agent-builder"])
@@ -29,6 +29,6 @@ def generate_draft(
 
     ``disclosure`` is the notice the person saw. Answers given under another one are not sent.
     """
-    service.check_disclosure(disclosure)
+    check_disclosure(disclosure)
     draft = service.generate_draft(db, context, provider, body)
     return DraftOut(draft=draft, sample=get_settings().model_provider == "mock")

@@ -25,6 +25,8 @@
       "backend/tests/test_route_inventory.py",
       "backend/tests/test_run_lock.py",
       "backend/tests/test_run_tests_script.py",
+      "backend/tests/test_runtime.py",
+      "backend/tests/test_runtime_prompt.py",
       "backend/tests/test_schema_constraints.py",
       "backend/tests/test_seed_dev.py",
       "backend/tests/test_skip_summary.py",

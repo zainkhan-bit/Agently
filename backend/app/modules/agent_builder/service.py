@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.errors import AppError, ConflictError, RateLimitError
+from app.core.errors import AppError, RateLimitError
 from app.modules.agent_builder.prompt import build_messages
 from app.modules.agent_builder.schemas import AgentDraft, Answers
 from app.modules.agents.service import ensure_room
@@ -24,7 +24,6 @@ from app.modules.providers.contract import (
     ProviderError,
     ProviderNotConfiguredError,
 )
-from app.modules.providers.selection import current_disclosure
 from app.modules.workspaces.service import WorkspaceContext
 
 logger = logging.getLogger(__name__)
@@ -43,16 +42,6 @@ class InvalidDraftError(AppError):
 
 class GenerationLimitError(RateLimitError):
     message = "You or your workspace generated too many drafts. Please try again later."
-
-
-class DisclosureChangedError(ConflictError):
-    code = "disclosure_changed"
-    message = "Who receives your answers has changed. They were not sent. Read the notice first."
-
-
-def check_disclosure(shown: str) -> None:
-    if shown != current_disclosure():
-        raise DisclosureChangedError()
 
 
 def generate_draft(

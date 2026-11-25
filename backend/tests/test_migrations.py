@@ -26,6 +26,7 @@ APP_TABLES = {
     "provider_spend",
     "conversations",
     "messages",
+    "executions",
 }
 
 

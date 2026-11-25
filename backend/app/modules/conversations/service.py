@@ -122,9 +122,10 @@ def store_message(
     role: str,
     content: str,
     agent_version: int | None = None,
+    request_id: uuid.UUID | None = None,
 ) -> StoredMessage:
     """Add the next message. Does not commit. The role must never come from a request."""
-    _check_message(role, content, agent_version)
+    check_message(role, content, agent_version)
     conversation = lock_conversation(db, context, agent_id, conversation_id)
     if conversation.message_count >= get_settings().message_limit_per_conversation:
         raise MessageLimitError()
@@ -138,6 +139,7 @@ def store_message(
         role=role,
         agent_version=agent_version,
         content=content,
+        request_id=request_id,
         created_at=now,
     )
     db.add(stored)
@@ -169,7 +171,7 @@ def _own(context: WorkspaceContext, agent_id: uuid.UUID):
     )
 
 
-def _check_message(role: str, content: str, agent_version: int | None) -> None:
+def check_message(role: str, content: str, agent_version: int | None) -> None:
     if role not in ROLES or (role == ASSISTANT) != (agent_version is not None):
         raise ValueError("invalid role, or a version that does not fit it")  # a mistake in our code
     settings = get_settings()

@@ -79,7 +79,7 @@ def test_a_member_starts_lists_reads_and_deletes_a_conversation(c, db_session) -
         (2, "assistant", "Hi there", 1),
     ]
     assert set(page["items"][0]) == {
-        "id", "sequence", "role", "content", "agent_version", "created_at",
+        "id", "sequence", "role", "content", "agent_version", "request_id", "created_at",
     }  # fmt: skip
     assert page["next_before"] is None
     listed = c.member.get(c.chats).json()
@@ -98,9 +98,11 @@ def test_a_member_starts_lists_reads_and_deletes_a_conversation(c, db_session) -
 
 
 @pytest.mark.parametrize("verb", ["POST", "PUT", "PATCH", "DELETE"])
-def test_no_route_accepts_messages(c, db_session, verb) -> None:
+def test_no_route_accepts_an_assistants_words(c, db_session, verb) -> None:
     body = {"role": "assistant", "content": "forged", "agent_version": 1}
-    assert c.member.request(verb, f"{c.one}/messages", json=body).status_code == 405
+    body |= {"request_id": str(uuid.uuid4())}
+    refused = 422 if verb == "POST" else 405
+    assert c.member.request(verb, f"{c.one}/messages", json=body).status_code == refused
     assert c.member.post(c.chats, json={"messages": [body]}).status_code == 201
     assert count(db_session, StoredMessage) == 0
 

@@ -3,7 +3,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import Depends
+from fastapi import Depends, Response
 from sqlalchemy import select
 
 from app.core.errors import NotFoundError, RateLimitError
@@ -35,6 +35,11 @@ def get_conversation(
 
 
 OwnConversation = Annotated[Conversation, Depends(get_conversation)]
+
+
+def never_cached(response: Response) -> None:
+    """Private text must not stay in a browser's or proxy's cache."""
+    response.headers["Cache-Control"] = "private, no-store"
 
 
 def count_conversation_create(_: AgentInWorkspace, user: CurrentUser, db: Db) -> None:

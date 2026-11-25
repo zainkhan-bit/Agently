@@ -138,7 +138,8 @@ def test_matrix_covers_the_known_endpoints() -> None:
     }
     chats = f"{agent}/conversations"
     chat = f"{chats}/{{conversation_id}}"
-    private = {("GET", chat), ("DELETE", chat), ("GET", f"{chat}/messages")}
+    private = {("GET", chat), ("DELETE", chat)}
+    private |= {("GET", f"{chat}/messages"), ("POST", f"{chat}/messages")}
     assert set(MATRIX) >= private | {("GET", chats), ("POST", chats)}
     assert set(PRIVATE_MATRIX) >= private
     assert set(NESTED_SWAPS) >= {
@@ -313,6 +314,7 @@ VALID_BODIES = (
     BODY,
     {"name": "Moved", "instructions": "x", "version": 2},
     {"version": 2},
+    {"request_id": str(uuid.uuid4()), "content": "Hello"},
 )
 
 

@@ -1,15 +1,19 @@
 """Conversations under /api/workspaces/{workspace_id}/agents/{agent_id}/conversations.
 
-Nothing here accepts a message: clients must not be able to write an assistant's words.
+Nothing here accepts a message: the runtime does, and only a person's own words.
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, status
 
 from app.modules.agents.dependencies import AgentInWorkspace
 from app.modules.conversations import service
-from app.modules.conversations.dependencies import OwnConversation, count_conversation_create
+from app.modules.conversations.dependencies import (
+    OwnConversation,
+    count_conversation_create,
+    never_cached,
+)
 from app.modules.conversations.models import Conversation
 from app.modules.conversations.schemas import (
     ConversationOut,
@@ -20,15 +24,10 @@ from app.modules.conversations.schemas import (
 from app.modules.identity.dependencies import Db
 from app.modules.workspaces.dependencies import MemberContext
 
-
-def _never_cached(response: Response) -> None:
-    response.headers["Cache-Control"] = "private, no-store"
-
-
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/agents/{agent_id}/conversations",
     tags=["conversations"],
-    dependencies=[Depends(_never_cached)],
+    dependencies=[Depends(never_cached)],
 )
 
 

@@ -69,6 +69,7 @@ class StoredMessage(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
             ondelete="CASCADE",
         ),
         UniqueConstraint("conversation_id", "sequence"),  # also serves "the last N messages"
+        UniqueConstraint("conversation_id", "request_id"),
         CheckConstraint("sequence >= 1", name="sequence_positive"),
         CheckConstraint(f"role IN ({', '.join(repr(role) for role in ROLES)})", name="role_valid"),
         CheckConstraint(
@@ -85,3 +86,5 @@ class StoredMessage(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     # Which configuration produced the answer. Empty for what the person wrote.
     agent_version: Mapped[int | None] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Chosen by the client for what the person wrote, so that a repeated request is recognised.
+    request_id: Mapped[uuid.UUID | None] = mapped_column()

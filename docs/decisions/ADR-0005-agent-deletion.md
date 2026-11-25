@@ -1,6 +1,6 @@
 # ADR-0005: Agent deletion permissions, cascade and usage records
 
-- **Status:** Accepted. Slice 3.2 built the conversation cascade and added decisions 4 and 5 (2026-11-26); the execution cascade is provisional until executions exist
+- **Status:** Accepted. Slice 3.2 built the conversation cascade and added decisions 4 and 5 (2026-11-26); Slice 3.3 built the execution cascade
 - **Date:** 2026-11-24
 
 ## Context

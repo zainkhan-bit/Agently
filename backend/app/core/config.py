@@ -64,6 +64,15 @@ class Settings(BaseSettings):
     user_message_max_characters: int = Field(default=8_000, gt=0)
     assistant_message_max_characters: int = Field(default=32_000, gt=0)
 
+    # Messages sent to agents, repeats included.
+    message_send_limit_per_user: int = Field(default=60, gt=0)
+    message_send_limit_per_workspace: int = Field(default=200, gt=0)
+    message_send_window_minutes: int = Field(default=60, gt=0)
+    # How much of a conversation an answer sees, and how long the answer may be.
+    runtime_history_messages: int = Field(default=20, ge=0, le=200)
+    runtime_input_token_budget: int = Field(default=32_000, gt=0, le=200_000)
+    runtime_max_output_tokens: int = Field(default=4_000, gt=0, le=65_536)
+
     # Agent and workspace writes: the wait for each lock, and idleness while holding locks.
     write_lock_timeout_seconds: int = Field(default=5, gt=0, le=3600)
     write_idle_timeout_seconds: int = Field(default=30, gt=0, le=3600)
@@ -71,7 +80,7 @@ class Settings(BaseSettings):
     # None = no AI features. The mock is not an AI and never runs in production.
     model_provider: Literal["mock", "gemini"] | None = None
     mock_provider_scenario: Literal[
-        "ok", "timeout", "rate_limited", "unavailable", "malformed", "extra_field"
+        "ok", "timeout", "rate_limited", "unavailable", "refused", "malformed", "extra_field"
     ] = "ok"
     # Next.js gives up on a proxied request after 30 seconds.
     provider_timeout_seconds: int = Field(default=20, gt=0, le=25)
