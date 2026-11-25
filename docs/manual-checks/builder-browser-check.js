@@ -199,7 +199,7 @@ async function main(browser) {
   await answer("What should it do").fill("Something");
   disclosure = "";
   await drafted(() => button("Generate draft").click());
-  await page.getByText("They were not sent").waitFor();
+  await page.getByText("Nothing was sent").waitFor();
   check(
     "a changed notice stops the answers, shows, and keeps them",
     (await notice.textContent()) === "" &&

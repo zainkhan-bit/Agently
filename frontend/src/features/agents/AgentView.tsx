@@ -13,13 +13,13 @@ import { usePageRouter } from "@/lib/usePageRouter";
 
 import { AgentMissing } from "./AgentMissing";
 import { changeFailure } from "./failure";
-import { agentPath, agentsPath, versionsPath } from "./paths";
+import { agentPath, agentsPath, chatsPath, versionsPath } from "./paths";
 import { type Agent, type AgentStatus, STATUS_LABEL } from "./types";
 import { useAgent } from "./useAgent";
 
 const STATUS_TEXT: Record<AgentStatus, string> = {
-  active: "Running agents is not available yet.",
-  paused: "A paused agent cannot run until it is resumed.",
+  active: "People can chat with it.",
+  paused: "A paused agent cannot answer until it is resumed. Conversations with it are kept.",
   archived: "An archived agent cannot run or be edited. Restoring it makes it paused.",
 };
 
@@ -123,6 +123,13 @@ export function AgentView({ workspaceId, agentId }: { workspaceId: string; agent
       <p>
         <strong>Status: {STATUS_LABEL[agent.status]}.</strong> {STATUS_TEXT[agent.status]}
       </p>
+      <Link
+        href={chatsPath(workspaceId, agent.id)}
+        onClick={focusContentOnFollow}
+        className={buttonClass}
+      >
+        Chat with this agent
+      </Link>
       <section aria-labelledby="actions-heading" className="flex flex-col gap-4">
         <h2 id="actions-heading" className="font-semibold">
           Actions
@@ -177,8 +184,9 @@ export function AgentView({ workspaceId, agentId }: { workspaceId: string; agent
             Delete agent
           </h2>
           <p>
-            This permanently deletes the agent and every saved version of its configuration. Type
-            the agent name to confirm.
+            This permanently deletes the agent, every saved version of its configuration, and
+            everyone&apos;s conversations with it. Conversations are private: you cannot see what
+            you would delete. Type the agent name to confirm.
           </p>
           <label className="flex flex-col gap-1">
             Agent name

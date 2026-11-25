@@ -3,6 +3,7 @@
 # The imported fixtures are used as arguments.
 # ruff: noqa: F401, F811
 
+import json
 import logging
 import uuid
 from datetime import timedelta
@@ -18,12 +19,14 @@ from app.modules.identity import throttle
 from app.modules.providers import selection
 from app.modules.providers.contract import (
     Completion,
+    Message,
     ProviderBudgetError,
     ProviderError,
     ProviderRateLimitError,
     ProviderRefusedError,
     ProviderSetupError,
     ProviderTimeoutError,
+    Role,
     TextPiece,
     ToolCall,
 )
@@ -189,6 +192,135 @@ def test_an_edit_during_the_call_does_not_change_the_recorded_version(r, db_sess
     r.provider.during = None
     assert send(r).json()["answer"]["agent_version"] == 2
     assert "Changed." in r.provider.calls[1][0][0].content
+
+
+# Streaming
+
+
+def stream(c, content="Hello", request_id=None, query=""):
+    body = {"request_id": str(request_id or uuid.uuid4()), "content": content}
+    response = c.member.post(f"{c.one}/messages/stream{query}", json=body)
+    return response, _parse(response.text) if response.status_code == 200 else []
+
+
+def _parse(body: str) -> list[tuple[str, dict]]:
+    events = []
+    for block in body.split("\n\n"):
+        if block:
+            name, data = block.split("\n")
+            events.append((name.removeprefix("event: "), json.loads(data.removeprefix("data: "))))
+    return events
+
+
+def test_a_stream_sends_the_message_the_pieces_in_order_and_the_stored_answer(
+    r, db_session
+) -> None:
+    r.provider.reply = [TextPiece("Hel"), TextPiece("lo\n"), Completion("Hello\n", 1, 1)]
+    response, events = stream(r)
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["Cache-Control"] == "private, no-store, no-transform"
+    assert [name for name, _ in events] == ["message", "piece", "piece", "done"]
+    assert events[0][1]["content"] == "Hello" and events[0][1]["role"] == "user"
+    assert "".join(data["text"] for name, data in events if name == "piece") == "Hello\n"
+    assert events[-1][1]["answer"]["content"] == "Hello\n"
+    assert stored(db_session)[-1] == ("assistant", "Hello\n", 1)
+
+
+def test_a_failure_during_the_stream_is_an_error_event(r, db_session) -> None:
+    r.provider.reply = [TextPiece("half"), ProviderTimeoutError()]
+    r.provider.reply = [TextPiece("half")]
+    _, events = stream(r)
+    assert [name for name, _ in events] == ["message", "piece", "error"]
+    assert events[-1][1] == {
+        "code": "provider_unavailable",
+        "message": ProviderError.message,
+    }
+    assert records(db_session) == [("failed", "provider_unavailable", 1, None)]
+
+
+def test_refusals_before_the_call_are_ordinary_errors(r, db_session) -> None:
+    r.owner.post(f"{r.agent_url}/pause")
+    response, _ = stream(r)
+    assert (response.status_code, code(response)) == (409, "agent_paused")
+
+
+def test_a_streamed_repeat_returns_the_stored_answer(r, db_session) -> None:
+    request = uuid.uuid4()
+    _, first = stream(r, request_id=request)
+    _, again = stream(r, request_id=request)
+    assert [name for name, _ in again] == ["message", "done"]
+    assert again[-1][1] == first[-1][1] and len(r.provider.calls) == 1
+
+
+def test_a_stream_that_is_not_read_to_the_end_is_cancelled(r, db_session, auth_app) -> None:
+    r.provider.reply = [TextPiece("a"), TextPiece("b"), Completion("ab", 1, 1)]
+    body = {"request_id": str(uuid.uuid4()), "content": "Hello"}
+    with r.member.stream("POST", f"{r.one}/messages/stream", json=body) as response:
+        lines = response.iter_lines()
+        assert next(lines) == "event: message"
+    assert stored(db_session) == [("user", "Hello", None)]
+    assert records(db_session) == [("cancelled", "cancelled", 1, None)]
+    assert r.provider.closed == 1
+
+
+def test_stopping_cancels_the_running_answer_and_its_call(r, db_session, monkeypatch) -> None:
+    monkeypatch.setattr(service, "STOP_CHECK_SECONDS", 0)
+    stopped = []
+
+    def pieces():
+        yield TextPiece("a")
+        stopped.append(r.member.post(f"{r.one}/messages/stop").status_code)
+        yield TextPiece("b")
+        yield Completion("ab", 1, 1)
+
+    r.provider.reply = None
+    r.provider._items = pieces
+    response, events = stream(r)
+    assert stopped == [204]
+    assert [name for name, _ in events] == ["message", "piece", "error"]
+    assert events[-1][1]["code"] == "answer_stopped"
+    assert records(db_session) == [("cancelled", "stopped", 1, None)]
+    assert stored(db_session) == [("user", "Hello", None)]
+    assert r.provider.closed == 1
+    r.provider._items = Recorder._items.__get__(r.provider)
+    r.provider.reply = "Fine."
+    assert send(r, "next").status_code == 201
+
+
+def test_stopping_with_nothing_running_changes_nothing(r, db_session) -> None:
+    send(r)
+    assert r.member.post(f"{r.one}/messages/stop").status_code == 204
+    assert records(db_session) == [("succeeded", None, 1, 2)]
+
+
+def test_stopping_touches_no_other_conversation(r, db_session) -> None:
+    other = accept(r, db_session)  # running in the member's conversation
+    owners = f"{r.chats}/{start(r.owner, r.chats)['id']}"
+    assert r.owner.post(f"{owners}/messages/stop").status_code == 204
+    second = f"{r.chats}/{start(r.member, r.chats)['id']}"
+    assert r.member.post(f"{second}/messages/stop").status_code == 204
+    assert records(db_session) == [("running", None, 1, None)]
+    other.close()
+
+
+def test_the_stop_check_is_not_made_after_every_piece(r, db_session, monkeypatch) -> None:
+    checks = []
+    monkeypatch.setattr(service.Run, "_stopped", lambda self: checks.append(1) or False)
+    r.provider.reply = [TextPiece("a"), TextPiece("b"), Completion("ab", 1, 1)]
+    assert send(r).status_code == 201
+    assert checks == []
+
+
+def test_the_slow_mock_takes_its_time(configure, monkeypatch) -> None:
+    from app.modules.providers import mock
+
+    slept = []
+    monkeypatch.setattr(mock.time, "sleep", slept.append)
+    messages = [Message(Role.USER, "<user_message>\nHi\n</user_message>")]
+    pieces = list(
+        mock.MockProvider("slow").stream(messages, timeout_seconds=5, max_output_tokens=99)
+    )
+    assert len(slept) == len(pieces) - 1 and set(slept) == {mock.SLOW_PIECE_SECONDS}
 
 
 # Repeats

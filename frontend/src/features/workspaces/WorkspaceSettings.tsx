@@ -63,7 +63,7 @@ export function WorkspaceSettings({ id }: { id: string }) {
           <h2 id="delete-heading" className="font-semibold">
             Delete workspace
           </h2>
-          <p>This permanently deletes the workspace, all its agents and everyone&apos;s access to it. Accounts are kept. Type the workspace name to confirm.</p>
+          <p>This permanently deletes the workspace, all its agents, everyone&apos;s private conversations with them, which you cannot see, and everyone&apos;s access to it. Accounts are kept. Type the workspace name to confirm.</p>
           <label className="flex flex-col gap-1">
             Workspace name
             <input

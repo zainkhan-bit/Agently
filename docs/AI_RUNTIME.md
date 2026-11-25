@@ -13,6 +13,12 @@ How a message becomes an answer (Slice 3.3). Code: `backend/app/modules/runtime/
 
 Closing a run before it ends cancels it: no answer is stored, the record says `cancelled`.
 
+## Streaming and stopping (Slice 3.4)
+
+`POST .../messages/stream` sends server-sent events: `message` (the stored message), `piece` (text, in order), then `done` (both stored messages) or `error` (a fixed code and text). Refusals before the call are ordinary error responses. Responses are `private, no-store, no-transform`, so no proxy compresses and holds back the pieces.
+
+`POST .../messages/stop` marks the running answer `cancelled` (code `stopped`). A running answer checks about once a second whether it was stopped, then closes the model call; its answer is never stored. Closing the connection is not enough on its own: the Next.js proxy keeps the connection to the backend open for 25 to 40 seconds after the browser closed it, so the page calls stop as well, also when it is left.
+
 ## Prompt
 
 `prompt.py`; an exact snapshot is in `backend/tests/snapshots/runtime_prompt.txt`.

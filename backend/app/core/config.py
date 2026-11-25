@@ -80,7 +80,14 @@ class Settings(BaseSettings):
     # None = no AI features. The mock is not an AI and never runs in production.
     model_provider: Literal["mock", "gemini"] | None = None
     mock_provider_scenario: Literal[
-        "ok", "timeout", "rate_limited", "unavailable", "refused", "malformed", "extra_field"
+        "ok",
+        "timeout",
+        "rate_limited",
+        "unavailable",
+        "refused",
+        "malformed",
+        "slow",
+        "extra_field",
     ] = "ok"
     # Next.js gives up on a proxied request after 30 seconds.
     provider_timeout_seconds: int = Field(default=20, gt=0, le=25)

@@ -48,7 +48,7 @@ def current_model() -> str:
 
 class DisclosureChangedError(ConflictError):
     code = "disclosure_changed"
-    message = "Who receives what you type has changed. It was not sent. Read the notice first."
+    message = "Who receives what you type has changed. Nothing was sent. Read the notice first."
 
 
 def check_disclosure(shown: str) -> None:

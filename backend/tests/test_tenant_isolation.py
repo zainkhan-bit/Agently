@@ -140,6 +140,7 @@ def test_matrix_covers_the_known_endpoints() -> None:
     chat = f"{chats}/{{conversation_id}}"
     private = {("GET", chat), ("DELETE", chat)}
     private |= {("GET", f"{chat}/messages"), ("POST", f"{chat}/messages")}
+    private |= {("POST", f"{chat}/messages/stream"), ("POST", f"{chat}/messages/stop")}
     assert set(MATRIX) >= private | {("GET", chats), ("POST", chats)}
     assert set(PRIVATE_MATRIX) >= private
     assert set(NESTED_SWAPS) >= {

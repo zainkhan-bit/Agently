@@ -1,7 +1,7 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 3: Slices 3.1 to 3.3 are done; 3.3 is proven with the mock only
-**Next smallest task:** Slice 3.4 — Chat interface and streaming (on local branch `slice-3.4`, for the owner's review)
+**Next smallest task:** the owner reviews local branch `slice-3.4` (Slice 3.4, chat), then merges it; then the Phase 3 exit gate
 
 ## Must fix before any deployment
 
@@ -12,7 +12,8 @@
 
 ## Must do before Slice 3.4 ships
 
-- Warn owners that deleting an agent or removing a member also deletes other people's private conversations (ADR-0005). Removing a member has no screen yet, so whichever slice adds that screen needs the warning too.
+- DONE on `slice-3.4`: deleting an agent or a workspace warns that everyone's private conversations go too.
+- STILL OPEN: removing a member has no screen yet (API only). The slice that adds that screen must warn that the member's conversations are deleted.
 
 ## Before enabling a real provider key
 
@@ -483,3 +484,26 @@ The build guide words the gate further (Slice 2.4):
   - The agent's instructions and a person's messages go to Google when Gemini is on.
 - **Commit / push:** `feat(runtime)` commit of 2026-11-26, pushed to `origin/main`.
 - **Next smallest task:** Slice 3.4
+
+### Slice 3.4 — Chat interface and streaming (local branch `slice-3.4`, not merged, not pushed)
+- **Date:** 2026-11-26 (owner away)
+- **What changed:** A conversation list per agent and a chat page. Answers stream in as they are made (`POST .../messages/stream`, server-sent events), and a Stop button cancels them (`POST .../messages/stop`). Sending, answering, complete, stopped and failed are announced; failed and stopped messages can be retried with the same request, also after a reload. Loading, empty, error, not found, paused, archived and no-provider states. All text is plain text: no Markdown, no HTML. The data notice now also names the conversation so far and the agent's instructions. Owners are warned that deleting an agent or workspace deletes everyone's private conversations.
+- **Found by the browser check:** the Next.js proxy keeps the backend connection open for 25 to 40 seconds after the browser stops reading, so a stopped answer kept running and blocked a retry. Fixed with the explicit stop route, which a running answer checks about once a second. A fix that only closed the stream better was tried, proved nothing, and was removed.
+- **Also fixed:** Slice 3.3 changed the wording of `disclosure_changed`, which broke `builder-browser-check.js`. Now "Nothing was sent." **`main` (96ef4de) still has the old wording and fails that browser check until this branch is merged.**
+- **Plan:** none written. The owner's Step 3 brief was the plan, with recommended options: separate list and chat pages, Enter sends and Shift+Enter starts a new line, plain text instead of Markdown (no renderer added), and the builder's notice reused for chat.
+- **Files/modules affected:** `frontend/src/features/chat/`, `frontend/src/app/(app)/workspaces/[id]/agents/[agentId]/conversations/`, `frontend/src/features/{agents,workspaces}/`, `backend/app/modules/{runtime,providers}/`, `backend/app/core/config.py`, `backend/tests/`, `docs/manual-checks/`, `docs/AI_RUNTIME.md`, `.gstack/pregate.json`, `README.md`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (1504) | `backend: .venv\Scripts\python -m pytest` | No skips |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Frontend | PASS (220) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | 26 new chat tests, XSS included |
+| Browser checks, production build, mock (`slow`) | PASS (46 + 116 + 54 + 99 + 22 + 15 + 59) | `docs/manual-checks/` | chat (new), agents, builder, dashboard, auth, workspace, versions. Axe and no horizontal scroll at 320, 375, 768 and 1280 px, and dark |
+| Test sensitivity | 7 of 8, then 8 of 8 | broke guards one at a time, in a copy | Stopping one conversation stopped every running answer without a failing test: a test was added |
+| Real provider | BLOCKED | | Mock only |
+
+- **`/verify`:** NOT_READY, `tests=TIMEOUT`: its backend lane passed (1504 in 586 s), then the frontend lane ran out of time. Not a failure, not worked around; the frontend suite passes on its own (220).
+- **Review:** self-review only (the owner runs `/code-review ultra`). Recorded: Stop pressed before the server has stored the message stops nothing, and behind the proxy the answer may then still be stored while the page says "Stopped".
+- **Known limitations:** no Markdown; long conversations show 50 messages first with "Show earlier messages"; the list shows the newest 100 conversations; conversations have no titles; there is no screen for removing members.
+- **Commit:** on local branch `slice-3.4`, not pushed, not merged.

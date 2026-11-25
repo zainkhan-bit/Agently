@@ -6,6 +6,7 @@ It repeats what people typed, so hostile text comes back as hostile output.
 import html
 import json
 import re
+import time
 from collections.abc import Sequence
 
 from app.modules.providers.contract import (
@@ -21,6 +22,7 @@ from app.modules.providers.contract import (
 
 CHARACTERS_PER_TOKEN = 4
 CHARACTERS_PER_PIECE = 20
+SLOW_PIECE_SECONDS = 0.4
 _ANSWER = re.compile(r'<user_answer field="(\w+)">\n(.*?)\n</user_answer>', re.DOTALL)
 _CHAT = re.compile(r"<user_message>\n(.*)\n</user_message>", re.DOTALL)
 _FAILURES = {
@@ -54,6 +56,8 @@ class MockProvider:
             messages, timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens
         )
         for start in range(0, len(completion.text), CHARACTERS_PER_PIECE):
+            if self._scenario == "slow":  # time to watch it arrive, or to stop it
+                time.sleep(min(SLOW_PIECE_SECONDS, timeout_seconds))
             yield TextPiece(completion.text[start : start + CHARACTERS_PER_PIECE])
         yield completion
 

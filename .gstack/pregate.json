@@ -42,6 +42,7 @@
       "frontend/src/features/agents/describe.test.tsx",
       "frontend/src/features/agents/versions.test.tsx",
       "frontend/src/features/auth/AccountView.test.tsx",
+      "frontend/src/features/chat/chat.test.tsx",
       "frontend/src/features/auth/AuthForm.test.tsx",
       "frontend/src/features/shell/AppShell.test.tsx",
       "frontend/src/features/system/ServiceStatus.test.tsx",

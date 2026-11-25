@@ -162,6 +162,7 @@ node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/agents-browser-check.js
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/versions-browser-check.js
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/builder-browser-check.js   # needs MODEL_PROVIDER=mock
+node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/chat-browser-check.js      # needs MODEL_PROVIDER=mock and MOCK_PROVIDER_SCENARIO=slow
 ```
 
 Real-provider test, from `backend/`. Without `--send` it only shows what would be sent:

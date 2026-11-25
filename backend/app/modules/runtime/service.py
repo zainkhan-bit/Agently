@@ -57,6 +57,9 @@ from app.modules.workspaces.service import WorkspaceContext
 logger = logging.getLogger(__name__)
 
 ABANDONED_AFTER = timedelta(seconds=60)  # on top of the provider's timeout
+# How often a running answer looks whether it was stopped: a proxy may keep its connection open
+# after the person left, so closing the connection is not enough.
+STOP_CHECK_SECONDS = 1.0
 # A call holds one of the server's 40 worker threads, which every request needs.
 _slots = threading.BoundedSemaphore(8)
 
@@ -79,6 +82,11 @@ class RetryOutdatedError(ConflictError):
 class AnswerDiscardedError(ConflictError):
     code = "answer_discarded"
     message = "The answer took too long and was not kept. Please try again."
+
+
+class AnswerStoppedError(ConflictError):
+    code = "answer_stopped"
+    message = "The answer was stopped. Nothing was saved."
 
 
 class AnswerInvalidError(AppError):
@@ -123,10 +131,17 @@ class Run:
         completion: Completion | None = None
         failure: AppError | None = None
         stream = None
+        checked = time.monotonic()
         try:
             stream = _start(self.provider, self.prompt)
             while completion is None and failure is None:
                 item = _next(stream)
+                if time.monotonic() - checked >= STOP_CHECK_SECONDS:
+                    checked = time.monotonic()
+                    if self._stopped():
+                        self._settled = True  # by whoever stopped it
+                        failure = AnswerStoppedError()
+                        break
                 if isinstance(item, TextPiece):
                     length += len(item.text)
                     if length > maximum:
@@ -143,6 +158,19 @@ class Run:
             self._settle(_status_of(failure), failure.code)
             raise failure
         self._store(completion)
+
+    def _stopped(self) -> bool:
+        """Whether someone stopped this run. Gives the connection back at once."""
+        try:
+            status = self.db.scalar(
+                select(Execution.status).where(Execution.id == self.execution_id)
+            )
+            self.db.commit()
+        except Exception as error:  # noqa: BLE001 - the answer goes on; storing checks again
+            self.db.rollback()
+            logger.warning("stop not checked (%s)", type(error).__name__)
+            return False
+        return status != RUNNING
 
     def _store(self, completion: Completion) -> None:
         self._ending = (FAILED, "internal_error")
@@ -233,6 +261,20 @@ class Run:
                 self._settle(*self._ending)
         finally:
             _slots.release()
+
+
+def stop(
+    db: Session, context: WorkspaceContext, agent_id: uuid.UUID, conversation_id: uuid.UUID
+) -> None:
+    """Stop the answer being made in this conversation, if any. Nothing of it will be stored."""
+    lock_conversation(db, context, agent_id, conversation_id)
+    db.execute(
+        update(Execution)
+        .where(Execution.conversation_id == conversation_id, Execution.status == RUNNING)
+        .values(status=CANCELLED, error_code="stopped", finished_at=clock.now())
+        .execution_options(synchronize_session=False)
+    )
+    db.commit()
 
 
 def find_answer(
