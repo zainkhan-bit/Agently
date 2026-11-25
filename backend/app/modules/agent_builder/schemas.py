@@ -8,6 +8,7 @@ from pydantic_core import PydanticCustomError
 from app.core.text import Name, check_text, is_blank
 from app.modules.agent_builder.hidden_text import has_hidden_text
 from app.modules.agents.schemas import DESCRIPTION_MAX, PURPOSE_MAX, Instructions
+from app.modules.providers.selection import Disclosure
 
 ANSWER_MAX, ANSWERS_TOTAL_MAX = 1_000, 3_000
 
@@ -76,6 +77,7 @@ class AgentDraft(BaseModel):
 
 class BuilderStatus(BaseModel):
     available: bool
+    disclosure: Disclosure
 
 
 class DraftOut(BaseModel):

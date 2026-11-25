@@ -3,6 +3,7 @@
 from app.core.database import Base
 from app.modules.agents.models import Agent, AgentVersion
 from app.modules.identity.models import AuthThrottleEvent, User, UserSession
+from app.modules.providers.tables import ProviderSpend
 from app.modules.workspaces.models import Membership, Workspace
 
 __all__ = [
@@ -11,6 +12,7 @@ __all__ = [
     "AuthThrottleEvent",
     "Base",
     "Membership",
+    "ProviderSpend",
     "User",
     "UserSession",
     "Workspace",

@@ -16,7 +16,14 @@ from app.modules.agent_builder.prompt import FIELDS, build_messages
 from app.modules.agent_builder.schemas import AgentDraft, Answers
 from app.modules.agent_builder.service import InvalidDraftError, parse_draft
 from app.modules.providers import selection
-from app.modules.providers.contract import Completion, Message, ProviderError
+from app.modules.providers.contract import (
+    Completion,
+    Message,
+    ProviderBudgetError,
+    ProviderError,
+    ProviderRefusedError,
+    ProviderSetupError,
+)
 from tests.auth_helpers import register
 
 SNAPSHOT = Path(__file__).parent / "snapshots" / "agent_builder_prompt.txt"
@@ -273,7 +280,7 @@ db = pytest.mark.db
 @pytest.mark.parametrize("role", ["owner", "member"])
 def test_members_generate_a_sample_draft_and_nothing_is_saved(s, db_session, role) -> None:
     client = getattr(s, role)
-    assert client.get(f"{s.base}/agent-builder").json() == {"available": True}
+    assert client.get(f"{s.base}/agent-builder").json() == {"available": True, "disclosure": "none"}
     response = client.post(s.url, json=ANSWERS)
     assert response.status_code == 200
     body = response.json()
@@ -371,7 +378,10 @@ def test_failures_are_distinct_and_recoverable(s, configure, scenario, status, c
 @db
 def test_without_a_provider_the_builder_is_off_and_manual_creation_works(s, configure) -> None:
     configure(model_provider="")
-    assert s.owner.get(f"{s.base}/agent-builder").json() == {"available": False}
+    assert s.owner.get(f"{s.base}/agent-builder").json() == {
+        "available": False,
+        "disclosure": "none",
+    }
     assert error(s.owner.post(s.url, json=ANSWERS)) == (503, "provider_not_configured")
     manual = {"name": "A", "instructions": "B"}
     assert s.owner.post(f"{s.base}/agents", json=manual).status_code == 201
@@ -546,3 +556,41 @@ def test_parallel_calls_are_capped(s, db_session, monkeypatch) -> None:
     slots.release()
     for _ in range(2):  # released after each call
         assert s.owner.post(s.url, json=ANSWERS).status_code == 200
+
+
+# Disclosure
+
+
+@db
+@pytest.mark.parametrize("tier", ["free", "paid"])
+def test_answers_are_sent_only_under_the_notice_that_was_shown(
+    s, db_session, configure, tier
+) -> None:
+    configure(model_provider="gemini", gemini_tier=tier)
+    s.use_recorder()
+    current = f"gemini_{tier}"
+    assert s.owner.get(f"{s.base}/agent-builder").json() == {
+        "available": True,
+        "disclosure": current,
+    }
+    other = "gemini_paid" if tier == "free" else "gemini_free"
+    for shown in ("", "?disclosure=none", f"?disclosure={other}", "?disclosure=x"):
+        assert error(s.owner.post(s.url + shown, json=ANSWERS)) == (409, "disclosure_changed")
+    assert s.calls == [] and events(db_session) == 0
+    response = s.owner.post(f"{s.url}?disclosure={current}", json=ANSWERS)
+    assert response.status_code == 200 and response.json()["sample"] is False
+
+
+@db
+@pytest.mark.parametrize(
+    ("failure", "status", "code"),
+    [
+        (ProviderBudgetError(), 503, "provider_budget"),
+        (ProviderSetupError(), 503, "provider_setup"),
+        (ProviderRefusedError(), 502, "provider_refused"),
+    ],
+)
+def test_the_new_failures_are_distinct(s, failure, status, code) -> None:
+    s.use_recorder()
+    s.reply = failure
+    assert error(s.owner.post(s.url, json=ANSWERS)) == (status, code)

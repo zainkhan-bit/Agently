@@ -1,28 +1,29 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 2 built; its exit gate is met with the mock provider only (see Phase 2 exit gate)
-**Next smallest task:** Slice 3.1 — Provider contract and configuration (not started, waiting for the owner)
+**Next smallest task:** finish Slice 3.1: the owner's `/code-review ultra` of branch `slice-3.1`, fix its findings, merge, push, then switch the local `.env` to Gemini
 
 ## Must fix before any deployment
 
 - Run uvicorn with `--no-proxy-headers`, and put an edge proxy that appends to `X-Forwarded-For` in front (see Slice 1.2).
+- Gemini (ADR-0006): the paid tier (production refuses free), a monthly spend cap set in AI Studio first, nobody under 18, and no users in the EEA, UK or Switzerland on the free tier.
 
 ## Before enabling a real provider key
 
-All of these, agreed with the owner on 2026-11-24:
+Agreed with the owner on 2026-11-24. Built in Slice 3.1:
 
-- Tell users, where they type their answers, that the answers go to an outside provider.
-- Set a spending cap on the provider account.
-- Run the real-provider test (guide 2.3: a valid draft from a real provider). BLOCKED until a key exists.
-- Give the adapter a hard deadline that it cannot exceed. The service passes a timeout but cannot stop a call.
-- Add a server-wide spending limit. The per-user and per-workspace limits do not stop someone with many accounts.
-- Stop provider and HTTP libraries from logging request text, also at `LOG_LEVEL=DEBUG`.
+- DONE: the describe page says who receives the answers, before anyone types.
+- DONE: a hard deadline the adapter cannot exceed.
+- DONE: a server-wide spending limit ($1 per 24 hours, $10 per 30 days).
+- DONE: HTTP libraries do not log, also at `LOG_LEVEL=DEBUG`.
+- NOT NEEDED on the free tier, which has no bill: a spending cap on the provider account. Required before the paid tier.
+- DONE: the real-provider test (`backend/scripts/gemini_check.py`), a valid draft and a stream.
 
 ## Blocked / needs owner input
 
 - ~~Slice 1.1 blocked on local PostgreSQL credentials~~ — resolved 2026-11-21: `GET /api/health/ready` returns `database: ok`.
 - **Known gap (owner: the slice that adds account deletion):** it must refuse to delete a workspace's last owner, or transfer or delete the workspace first, with tests. Slice 1.3 enforces this for leaving, removal and demotion; account deletion does not exist in the app yet. Lock order and edge cases: `docs/DATABASE_DESIGN.md`.
-- A real model-provider API key is needed for real-provider tests (Slices 2.3 and 3.1). Until then they are BLOCKED and a mock provider is used.
+- The real-provider tests of Slices 2.3 and 3.1 passed on 2026-11-25.
 
 ## Phase 1 exit gate
 
@@ -403,3 +404,23 @@ The build guide words the gate further (Slice 2.4):
   - No side-by-side diff, labels or deletion of versions.
 - **Commit / push:** `feat(agents)` commit of 2026-11-25, pushed to `origin/main`.
 - **Next smallest task:** Slice 3.1 (waiting for the owner)
+
+### Slice 3.1 — Provider contract and Gemini adapter (not finished)
+- **Date:** 2026-11-25
+- **What changed:** A Gemini adapter chosen with `MODEL_PROVIDER=gemini`, streaming on the provider interface and the mock, a tool-call type that nothing uses, an allowed-model list, a server-wide spending limit (migration `0005`), a hard deadline, silent HTTP libraries, and a notice of who receives the answers that the server enforces. Agents' `model` field stays empty. Tests cannot use a real key or the network.
+- **Plan:** `docs/plans/2026-11-25-1240-feat-gemini-provider-plan.md`. Decision: ADR-0006 (Gemini instead of Anthropic).
+- **Files/modules affected:** `backend/app/modules/{providers,agent_builder}/`, `backend/app/core/{config,logs}.py`, `backend/migrations/versions/0005_provider_spend.py`, `backend/scripts/gemini_check.py`, `backend/tests/`, `frontend/src/features/agents/`, `docs/`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (1150) | `backend: .venv\Scripts\python -m pytest` | No skips |
+| Backend lint/format, migration on dev DB | PASS | `ruff check .`, `ruff format --check .`, `alembic upgrade head`, `check` | |
+| Frontend | PASS (192) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
+| Browser check, production build, mock | PASS (54) | `docs/manual-checks/builder-browser-check.js` | Other browser checks not re-run |
+| Test sensitivity, backend | 55 of 55 caught | broke one guard at a time | 52 at first; the three survivors were missing tests, added. Frontend guards not mutated |
+| Real provider | PASS (draft and stream) | `python -m scripts.gemini_check --send` | 2026-11-25, three calls, `gemini-3.5-flash-lite`, free tier. Draft: valid, no fence, 409 tokens in, 131 out, 2.6 s. The first stream prompt (counting to thirty) got `provider_refused`, cause not recorded; refusal reasons from a fixed list are now logged, and with a new prompt the stream passed: 6 pieces, 29 in, 102 out, 1.6 s |
+
+- **Review:** self-review only so far. The owner runs `/code-review ultra`; nothing is committed until its findings are fixed.
+- **Known limitations:** the spending limit rests on Google's token counts and our price list; the tier is declared, not detected; `provider_spend` is never cleaned up; opening a database connection for a reservation is not covered by the provider deadline.
+- **Commit / push:** committed on the local branch `slice-3.1` for review. Not merged, not pushed. The local `.env` stays on the mock until it is.

@@ -11,20 +11,20 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.errors import AppError, RateLimitError
+from app.core.errors import AppError, ConflictError, RateLimitError
 from app.modules.agent_builder.prompt import build_messages
 from app.modules.agent_builder.schemas import AgentDraft, Answers
 from app.modules.agents.service import ensure_room
 from app.modules.identity import throttle
 from app.modules.providers.contract import (
+    KNOWN_ERRORS,
     Completion,
     Message,
     Provider,
     ProviderError,
     ProviderNotConfiguredError,
-    ProviderRateLimitError,
-    ProviderTimeoutError,
 )
+from app.modules.providers.selection import current_disclosure
 from app.modules.workspaces.service import WorkspaceContext
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,16 @@ class InvalidDraftError(AppError):
 
 class GenerationLimitError(RateLimitError):
     message = "You or your workspace generated too many drafts. Please try again later."
+
+
+class DisclosureChangedError(ConflictError):
+    code = "disclosure_changed"
+    message = "Who receives your answers has changed. They were not sent. Read the notice first."
+
+
+def check_disclosure(shown: str) -> None:
+    if shown != current_disclosure():
+        raise DisclosureChangedError()
 
 
 def generate_draft(
@@ -79,12 +89,9 @@ def _call(provider: Provider, messages: list[Message]) -> str | ProviderError:
         if isinstance(completion, Completion) and isinstance(completion.text, str):
             return completion.text
         failure = ProviderError
-    except ProviderTimeoutError:
-        failure = ProviderTimeoutError
-    except ProviderRateLimitError:
-        failure = ProviderRateLimitError
-    except Exception:  # noqa: BLE001 - nothing about it may be logged
-        failure = ProviderError
+    except Exception as error:  # noqa: BLE001 - nothing about it may be logged
+        # Only the class survives, and only a known one.
+        failure = type(error) if type(error) in KNOWN_ERRORS else ProviderError
     logger.warning("draft generation failed (%s)", failure.code)
     return failure()
 

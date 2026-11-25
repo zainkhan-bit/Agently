@@ -1,10 +1,13 @@
 """Application configuration loaded from environment variables (and backend/.env locally)."""
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.modules.providers.models import GEMINI_MODELS
 
 
 class Settings(BaseSettings):
@@ -12,6 +15,8 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # A refused value may be a secret, and startup errors are logged.
+        hide_input_in_errors=True,
     )
 
     # Branding is centralised here (and in frontend/src/config/brand.ts).
@@ -56,18 +61,31 @@ class Settings(BaseSettings):
     write_idle_timeout_seconds: int = Field(default=30, gt=0, le=3600)
 
     # None = no AI features. The mock is not an AI and never runs in production.
-    model_provider: Literal["mock"] | None = None
+    model_provider: Literal["mock", "gemini"] | None = None
     mock_provider_scenario: Literal[
         "ok", "timeout", "rate_limited", "unavailable", "malformed", "extra_field"
     ] = "ok"
     # Next.js gives up on a proxied request after 30 seconds.
     provider_timeout_seconds: int = Field(default=20, gt=0, le=25)
+    gemini_api_key: SecretStr | None = None
+    gemini_model: str = "gemini-3.5-flash-lite"
+    # What people are told depends on it. Google uses and reviews what the free tier receives.
+    gemini_tier: Literal["free", "paid"] = "free"
+    # All real provider calls together, in US dollars: the last 24 hours and the last 30 days.
+    provider_spend_limit_daily: Decimal = Field(default=Decimal(1), gt=0, le=100_000)
+    provider_spend_limit_monthly: Decimal = Field(default=Decimal(10), gt=0, le=100_000)
     generation_limit_per_user: int = Field(default=10, gt=0)
     generation_limit_per_workspace: int = Field(default=30, gt=0)
     generation_window_minutes: int = Field(default=60, gt=0)
 
     # Not env_ignore_empty: that would make an empty DATABASE_URL fall back to backend/.env.
-    @field_validator("trusted_proxy_hops", "session_cookie_secure", "model_provider", mode="before")
+    @field_validator(
+        "trusted_proxy_hops",
+        "session_cookie_secure",
+        "model_provider",
+        "gemini_api_key",
+        mode="before",
+    )
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
         return None if value == "" else value
@@ -77,6 +95,19 @@ class Settings(BaseSettings):
         if self.session_cookie_secure is not None:
             return self.session_cookie_secure
         return self.environment != "development"
+
+    def check_gemini(self) -> str:
+        """The key, or a startup error that never repeats it."""
+        key = self.gemini_api_key.get_secret_value() if self.gemini_api_key else ""
+        if not key:
+            raise RuntimeError("GEMINI_API_KEY must be set when MODEL_PROVIDER is gemini")
+        if not all("!" <= character <= "~" for character in key):
+            raise RuntimeError("GEMINI_API_KEY holds characters that a key cannot have")
+        if self.gemini_model not in GEMINI_MODELS:
+            raise RuntimeError(f"GEMINI_MODEL must be one of: {', '.join(GEMINI_MODELS)}")
+        if self.is_production and self.gemini_tier == "free":
+            raise RuntimeError("GEMINI_TIER must not be free in production")
+        return key
 
     def check_production_safety(self) -> None:
         """Refuse to start production with settings that silently weaken authentication."""

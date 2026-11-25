@@ -23,6 +23,7 @@ APP_TABLES = {
     "auth_throttle_events",
     "agents",
     "agent_versions",
+    "provider_spend",
 }
 
 

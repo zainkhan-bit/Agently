@@ -1,11 +1,10 @@
 """FastAPI application factory."""
 
-import logging
-
 from fastapi import FastAPI
 
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
+from app.core.logs import configure_logging
 from app.core.origin_guard import OriginGuardMiddleware
 from app.core.request_id import RequestIdMiddleware
 from app.modules import health
@@ -18,10 +17,9 @@ from app.modules.workspaces import router as workspaces
 def create_app() -> FastAPI:
     settings = get_settings()
     settings.check_production_safety()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    if settings.model_provider == "gemini":
+        settings.check_gemini()
+    configure_logging(settings.log_level)
     app = FastAPI(
         title=f"{settings.brand_name} API",
         # Interactive docs only outside production.

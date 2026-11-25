@@ -66,7 +66,7 @@ async function main(browser) {
   const asked = () => dialogs.splice(0).join();
   const drafted = (action) =>
     Promise.all([
-      page.waitForResponse((response) => response.url().endsWith("/agent-builder/drafts")),
+      page.waitForResponse((response) => response.url().includes("/agent-builder/drafts?")),
       action(),
     ]);
 
@@ -93,13 +93,13 @@ async function main(browser) {
     [504, "provider_timeout", "The AI provider took too long to answer. Please try again."],
     [502, "draft_invalid", "The AI returned a draft that cannot be used. Please try again."],
   ]) {
-    await page.route("**/agent-builder/drafts", (route) =>
+    await page.route("**/agent-builder/drafts?*", (route) =>
       route.fulfill({ status, json: { error: { code, message } } }),
     );
     await button("Generate draft").click();
     await page.getByText(message).waitFor();
     check(`${code} is explained and keeps the answers`, (await answer("What should it do").inputValue()) === evil);
-    await page.unroute("**/agent-builder/drafts");
+    await page.unroute("**/agent-builder/drafts?*");
   }
   await accessible(page, "failed generation");
 
@@ -138,11 +138,11 @@ async function main(browser) {
   await button("Generate a new draft").click();
   check("replacing an edited draft asks", asked() === "confirm" && (await field("Name").inputValue()) === "My own name");
   accept = true;
-  await page.route("**/agent-builder/drafts", (route) => route.abort());
+  await page.route("**/agent-builder/drafts?*", (route) => route.abort());
   await button("Generate a new draft").click();
   await page.getByText("Could not reach the server").waitFor();
   check("a failed replacement keeps the edits", (await field("Name").inputValue()) === "My own name");
-  await page.unroute("**/agent-builder/drafts");
+  await page.unroute("**/agent-builder/drafts?*");
   await drafted(() => button("Generate a new draft").click());
   await page.waitForFunction(() => document.querySelector("#agent-name")?.value === "Sample agent");
   check("agreeing replaces it", true);
@@ -171,6 +171,46 @@ async function main(browser) {
     await page.setViewportSize({ width, height });
     await accessible(page, `${size} questions`);
   }
+
+  // Who receives the answers. Only the notice is faked: the server still has the mock, so it
+  // refuses answers given under another notice, and nothing can reach Google.
+  let disclosure = "gemini_free";
+  const google = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).origin !== new URL(BASE).origin) google.push(request.url());
+  });
+  await page.route("**/agent-builder", (route) =>
+    disclosure ? route.fulfill({ json: { available: true, disclosure } }) : route.continue(),
+  );
+  const notice = page.getByRole("note");
+  await page.goto(`${workspace}/agents/new/describe`);
+  await answer("What is the agent for").waitFor();
+  check(
+    "the free notice is above the questions",
+    (await notice.textContent()) ===
+      "Your answers are sent to Google Gemini. Google may use them to improve its products and people may read them. Don't include personal or confidential information." &&
+      (await notice.boundingBox()).y < (await answer("What is the agent for").boundingBox()).y,
+  );
+  for (const [size, [width, height]] of Object.entries(SIZES)) {
+    await page.setViewportSize({ width, height });
+    await accessible(page, `${size} notice`);
+  }
+  await answer("What is the agent for").fill("Keep me");
+  await answer("What should it do").fill("Something");
+  disclosure = "";
+  await drafted(() => button("Generate draft").click());
+  await page.getByText("They were not sent").waitFor();
+  check(
+    "a changed notice stops the answers, shows, and keeps them",
+    (await notice.textContent()) === "" &&
+      (await answer("What is the agent for").inputValue()) === "Keep me" &&
+      (await review.count()) === 0,
+  );
+  disclosure = "something new";
+  await page.goto(`${workspace}/agents/new/describe`);
+  await button("Retry").waitFor();
+  check("an unknown notice lets nobody type", (await page.locator("textarea").count()) === 0);
+  check("the browser talked to this site only", google.length === 0);
 }
 
 (async () => {

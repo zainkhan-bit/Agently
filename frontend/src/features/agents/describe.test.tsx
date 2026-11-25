@@ -10,7 +10,7 @@ const router = vi.hoisted(() => ({ replace: vi.fn(), push: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
 const BUILDER = "/api/workspaces/w1/agent-builder";
-const DRAFTS = `POST ${BUILDER}/drafts`;
+const DRAFTS = `POST ${BUILDER}/drafts?disclosure=none`;
 const CREATE = "POST /api/workspaces/w1/agents";
 const draft = {
   name: "Order helper",
@@ -57,7 +57,7 @@ beforeEach(() => {
   routes = {
     "GET /api/workspaces/w1": () => Response.json({ id: "w1", name: "Team", role: "owner" }),
     "GET /api/workspaces/w1/members": () => Response.json([]),
-    [`GET ${BUILDER}`]: () => Response.json({ available: true }),
+    [`GET ${BUILDER}`]: () => Response.json({ available: true, disclosure: "none" }),
     [DRAFTS]: () => Response.json({ draft, sample: true }),
     [CREATE]: () => Response.json({ ...draft, id: "a9" }, { status: 201 }),
   };
@@ -82,7 +82,7 @@ describe("offering the builder", () => {
   });
 
   it.each([
-    ["not set up", () => Response.json({ available: false })],
+    ["not set up", () => Response.json({ available: false, disclosure: "none" })],
     ["unknown", () => Promise.reject(new TypeError("down"))],
   ])("hides it when %s, and the manual form works", async (_, reply) => {
     routes[`GET ${BUILDER}`] = reply;
@@ -92,7 +92,7 @@ describe("offering the builder", () => {
   });
 
   it("shows no form on its own page when not set up", async () => {
-    routes[`GET ${BUILDER}`] = () => Response.json({ available: false });
+    routes[`GET ${BUILDER}`] = () => Response.json({ available: false, disclosure: "none" });
     render(<DescribeAgent workspaceId="w1" />);
     expect(await screen.findByText(/not available/)).toBeInTheDocument();
     expect(screen.queryByRole("form")).toBeNull();
@@ -106,7 +106,7 @@ describe("offering the builder", () => {
     routes[`GET ${BUILDER}`] = () => Promise.reject(new TypeError("down"));
     render(<DescribeAgent workspaceId="w1" />);
     const retry = await screen.findByRole("button", { name: "Retry" });
-    routes[`GET ${BUILDER}`] = () => Response.json({ available: true });
+    routes[`GET ${BUILDER}`] = () => Response.json({ available: true, disclosure: "none" });
     fireEvent.click(retry);
     await screen.findByLabelText(/What is the agent for/);
   });
@@ -195,7 +195,7 @@ describe("draft", () => {
     expect(screen.getByText(/Sample draft, made without AI/)).toBeInTheDocument();
     expect(screen.getByLabelText(/^Name/)).toHaveValue("Order helper");
     expect(screen.getByLabelText(/^Instructions/)).toHaveValue("Be kind.");
-    expect(posts().map(([url]) => url)).toEqual([`${BUILDER}/drafts`]);
+    expect(posts().map(([url]) => url)).toEqual([`${BUILDER}/drafts?disclosure=none`]);
     expect(JSON.parse(posts()[0][1]!.body as string)).toEqual({
       purpose: "Orders",
       tasks: "Reply",
@@ -323,5 +323,74 @@ describe("unsaved text", () => {
     const link = screen.getByRole("link", { name: "Cancel" });
     expect(fireEvent.click(link)).toBe(false);
     expect(confirmMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("who receives the answers", () => {
+  const free =
+    "Your answers are sent to Google Gemini. Google may use them to improve its products and people may read them. Don't include personal or confidential information.";
+  const paid =
+    "Your answers are sent to Google Gemini. Don't include personal or confidential information.";
+  const serve = (disclosure: unknown) => {
+    routes[`GET ${BUILDER}`] = () => Response.json({ available: true, disclosure });
+  };
+
+  it.each([
+    ["none", ""],
+    ["gemini_free", free],
+    ["gemini_paid", paid],
+  ])("says so for %s before the questions, and sends what it said", async (disclosure, text) => {
+    serve(disclosure);
+    routes[`POST ${BUILDER}/drafts?disclosure=${disclosure}`] = routes[DRAFTS];
+    await open();
+    const notice = screen.getByRole("note");
+    expect(notice).toHaveTextContent(text, { normalizeWhitespace: false });
+    expect(notice.textContent).toBe(text);
+    const first = screen.getByLabelText(/What is the agent for/);
+    expect(notice.compareDocumentPosition(first)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(first).toHaveAttribute("aria-describedby", "answers-notice");
+    answer();
+    generate();
+    await reviewing();
+  });
+
+  it.each([undefined, null, "", "openai", "constructor", 5])(
+    "lets nobody type when it is %s",
+    async (disclosure) => {
+      serve(disclosure);
+      render(<DescribeAgent workspaceId="w1" />);
+      await screen.findByRole("button", { name: "Retry" });
+      expect(screen.queryByRole("textbox")).toBeNull();
+      serve("gemini_free");
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      expect(await screen.findByRole("note")).toHaveTextContent(free);
+    },
+  );
+
+  it("shows a changed notice, keeps the answers, and sends only when asked again", async () => {
+    routes[DRAFTS] = () => fail(409, "disclosure_changed", "Not sent.");
+    await open();
+    answer();
+    serve("gemini_free");
+    generate();
+    await waitFor(() => expect(screen.getByRole("note")).toHaveTextContent(free));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not sent.");
+    expect(screen.getByLabelText(/What is the agent for/)).toHaveValue("Orders");
+    expect(posts()).toHaveLength(1);
+    routes[`POST ${BUILDER}/drafts?disclosure=gemini_free`] = () =>
+      Response.json({ draft, sample: false });
+    generate();
+    await reviewing();
+    expect(posts()).toHaveLength(2);
+  });
+
+  it("keeps the answers when the new notice cannot be loaded", async () => {
+    routes[DRAFTS] = () => fail(409, "disclosure_changed", "Not sent.");
+    await open();
+    answer();
+    routes[`GET ${BUILDER}`] = () => Promise.reject(new TypeError("down"));
+    generate();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Not sent.");
+    expect(screen.getByLabelText(/What is the agent for/)).toHaveValue("Orders");
   });
 });

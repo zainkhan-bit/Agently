@@ -101,6 +101,6 @@ The MVP journey (Section 2) depends on none of these.
 
 | # | Question | Needed by | Current assumption |
 |---|---|---|---|
-| Q1 | Which model provider/key will be used for real-provider tests? | Phase 3.1 | Anthropic Claude adapter first; tests BLOCKED until a key is set |
+| Q1 | Which model provider/key will be used for real-provider tests? | Phase 3.1 | Google Gemini (ADR-0006) |
 | Q2 | Email delivery service for verification/password reset? | Post-MVP | Not built; not faked |
 | Q3 | Production hosting target? | Phase 6.5 | Container-friendly; documented later |

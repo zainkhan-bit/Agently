@@ -2,14 +2,17 @@
 
 import inspect
 import json
+import logging
 
 import pytest
 from pydantic import ValidationError
 
 from app.core.config import Settings, get_settings
+from app.core.logs import configure_logging
 from app.main import create_app
 from app.modules.providers import selection
 from app.modules.providers.contract import (
+    KNOWN_ERRORS,
     Completion,
     Message,
     Provider,
@@ -17,8 +20,12 @@ from app.modules.providers.contract import (
     ProviderRateLimitError,
     ProviderTimeoutError,
     Role,
+    TextPiece,
+    ToolCall,
 )
+from app.modules.providers.gemini import GeminiProvider
 from app.modules.providers.mock import MockProvider
+from app.modules.providers.spending import MeteredProvider
 
 MESSAGES = [Message(Role.SYSTEM, "Rules"), Message(Role.USER, "Hello")]
 
@@ -135,3 +142,132 @@ def test_production_refuses_the_mock(env) -> None:
 def test_bad_settings_stop_startup(values) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **values)
+
+
+# Streaming
+
+
+def test_every_provider_streams_with_the_same_parameters() -> None:
+    for implementation in (Provider, MockProvider, GeminiProvider, MeteredProvider):
+        for method in (implementation.complete, implementation.stream):
+            parameters = list(inspect.signature(method).parameters)
+            assert parameters == ["self", "messages", "timeout_seconds", "max_output_tokens"]
+
+
+def test_the_mock_streams_what_it_completes() -> None:
+    limits = {"timeout_seconds": 5, "max_output_tokens": 500}
+    *pieces, last = MockProvider().stream(MESSAGES, **limits)
+    assert len(pieces) > 1 and all(isinstance(piece, TextPiece) for piece in pieces)
+    assert last == complete(MockProvider())
+    assert "".join(piece.text for piece in pieces) == last.text
+    cancelled = MockProvider().stream(MESSAGES, **limits)
+    next(cancelled)
+    cancelled.close()
+    with pytest.raises(StopIteration):
+        next(cancelled)
+    with pytest.raises(ProviderTimeoutError):
+        next(MockProvider("timeout").stream(MESSAGES, **limits))
+
+
+def test_tool_calls_are_private_text_too() -> None:
+    call = ToolCall("1", "secret", "secret")
+    assert "secret" not in repr(call) + repr(TextPiece("secret"))
+    assert "secret" not in repr(Completion("secret", 1, 1, (call,)))
+
+
+def test_every_known_error_has_its_own_code() -> None:
+    codes = {error.code for error in KNOWN_ERRORS}
+    assert len(codes) == len(KNOWN_ERRORS)
+
+
+# Gemini setup
+
+
+GEMINI = {
+    "ENVIRONMENT": "development",
+    "MODEL_PROVIDER": "gemini",
+    "GEMINI_API_KEY": "AIza-SECRET",
+}
+
+
+@pytest.fixture
+def gemini_env(env, monkeypatch):
+    monkeypatch.setattr(selection, "get_session_factory", lambda: None)
+    return lambda **values: env(**(GEMINI | values))
+
+
+def test_gemini_is_always_behind_the_spending_limit(gemini_env) -> None:
+    gemini_env()
+    provider = selection.get_provider()
+    assert type(provider) is MeteredProvider and type(provider._inner) is GeminiProvider
+    create_app()
+
+
+def test_the_tests_never_see_a_real_provider_or_key() -> None:
+    settings = Settings()
+    assert settings.model_provider is None and settings.gemini_api_key is None
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({"GEMINI_API_KEY": ""}, "GEMINI_API_KEY must be set"),
+        ({"GEMINI_API_KEY": "AIza SECRET"}, "GEMINI_API_KEY holds"),
+        ({"GEMINI_API_KEY": "SECRET\r\nX: y"}, "GEMINI_API_KEY holds"),
+        ({"GEMINI_API_KEY": "SECRETé"}, "GEMINI_API_KEY holds"),
+        ({"GEMINI_MODEL": "gemini-2.5-flash"}, "GEMINI_MODEL"),
+        ({"GEMINI_MODEL": "../../x"}, "GEMINI_MODEL"),
+    ],
+)
+def test_an_unusable_gemini_setup_stops_startup(gemini_env, values, message) -> None:
+    gemini_env(**values)
+    with pytest.raises(RuntimeError, match=message) as caught:
+        create_app()
+    assert "SECRET" not in str(caught.value)
+
+
+def test_production_refuses_the_free_tier(gemini_env) -> None:
+    production = {
+        "ENVIRONMENT": "production",
+        "TRUSTED_PROXY_HOPS": "1",
+        "SESSION_COOKIE_SECURE": "true",
+    }
+    gemini_env(**production)
+    with pytest.raises(RuntimeError, match="GEMINI_TIER"):
+        create_app()
+    gemini_env(**production, GEMINI_TIER="paid")
+    create_app()
+
+
+def test_the_tier_is_free_unless_declared() -> None:
+    assert Settings.model_fields["gemini_tier"].default == "free"
+
+
+def test_the_disclosure_follows_the_settings(gemini_env) -> None:
+    gemini_env()
+    assert selection.current_disclosure() == "gemini_free"
+    gemini_env(GEMINI_TIER="paid")
+    assert selection.current_disclosure() == "gemini_paid"
+    for provider in ("mock", ""):
+        gemini_env(MODEL_PROVIDER=provider)
+        assert selection.current_disclosure() == "none"
+
+
+def test_settings_errors_do_not_repeat_values() -> None:
+    with pytest.raises(ValidationError) as caught:
+        Settings(_env_file=None, gemini_api_key=["SECRET"], gemini_tier="SECRET")
+    assert "SECRET" not in str(caught.value)
+    assert "SECRET" not in repr(Settings(_env_file=None, gemini_api_key="SECRET"))
+
+
+@pytest.mark.parametrize("name", ["provider_spend_limit_daily", "provider_spend_limit_monthly"])
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "x", ""])
+def test_bad_spending_limits_stop_startup(name, value) -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{name: value})
+
+
+def test_http_libraries_are_silent_at_debug() -> None:
+    configure_logging("DEBUG")
+    for name in ("httpx", "httpcore", "httpcore.http11", "httpcore.connection"):
+        assert not logging.getLogger(name).isEnabledFor(logging.CRITICAL)

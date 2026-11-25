@@ -14,9 +14,12 @@ from app.modules.providers.contract import (
     ProviderError,
     ProviderRateLimitError,
     ProviderTimeoutError,
+    Stream,
+    TextPiece,
 )
 
 CHARACTERS_PER_TOKEN = 4
+CHARACTERS_PER_PIECE = 20
 _ANSWER = re.compile(r'<user_answer field="(\w+)">\n(.*?)\n</user_answer>', re.DOTALL)
 _FAILURES = {
     "timeout": ProviderTimeoutError,
@@ -40,6 +43,16 @@ class MockProvider:
             input_tokens=_fake_tokens("".join(message.content for message in messages)),
             output_tokens=_fake_tokens(text),
         )
+
+    def stream(
+        self, messages: Sequence[Message], *, timeout_seconds: float, max_output_tokens: int
+    ) -> Stream:
+        completion = self.complete(
+            messages, timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens
+        )
+        for start in range(0, len(completion.text), CHARACTERS_PER_PIECE):
+            yield TextPiece(completion.text[start : start + CHARACTERS_PER_PIECE])
+        yield completion
 
     def _text(self, messages: Sequence[Message]) -> str:
         if self._scenario == "malformed":

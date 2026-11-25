@@ -129,7 +129,7 @@ An agent outside the workspace in the path, or a version of another agent, is a 
 | `GET /api/workspaces/{id}/agent-builder` | Whether drafts are available |
 | `POST /api/workspaces/{id}/agent-builder/drafts` | Turn answers into a draft (name, purpose, description, instructions). Saves nothing |
 
-Set `MODEL_PROVIDER=mock` in `backend/.env` for local sample drafts made without AI; production refuses to start with it. Without a provider the option is hidden and the manual form still works. There is no real provider yet. Answers are at most 1,000 characters each and 3,000 together. Generation is limited to 10 per user and 30 per workspace per hour (429), counting every call to the provider. A full workspace answers 409. Other failures: 502 `draft_invalid`, 503 `provider_unavailable` (also when 8 drafts are already being generated), `provider_rate_limited` or `provider_not_configured`, 504 `provider_timeout`.
+Set `MODEL_PROVIDER=mock` in `backend/.env` for local sample drafts made without AI; production refuses to start with it. Without a provider the option is hidden and the manual form still works. `MODEL_PROVIDER=gemini` with `GEMINI_API_KEY` sends the answers to Google (ADR-0006); settings are in `backend/.env.example`. The page shows who receives the answers, and the request must repeat the notice it showed in `?disclosure=` (409 `disclosure_changed` otherwise). All real calls share a limit of $1 per 24 hours and $10 per 30 days (503 `provider_budget`). Answers are at most 1,000 characters each and 3,000 together. Generation is limited to 10 per user and 30 per workspace per hour (429), counting every call to the provider. A full workspace answers 409. Other failures: 502 `draft_invalid`, 503 `provider_unavailable` (also when 8 drafts are already being generated), `provider_rate_limited`, `provider_setup` (Google refused the key or model) or `provider_not_configured`, 502 `provider_refused`, 504 `provider_timeout`.
 
 ## Tests and checks
 
@@ -162,6 +162,13 @@ node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/agents-browser-check.js
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/versions-browser-check.js
 node "$HOME\.claude\plugins\cache\playwright-skill\playwright-skill\5.0.0\skills\playwright-skill\run.js" docs/manual-checks/builder-browser-check.js   # needs MODEL_PROVIDER=mock
+```
+
+Real-provider test, from `backend/`. Without `--send` it only shows what would be sent:
+
+```powershell
+.venv\Scripts\python -m scripts.gemini_check
+.venv\Scripts\python -m scripts.gemini_check --send   # calls Google
 ```
 
 ## Shutdown

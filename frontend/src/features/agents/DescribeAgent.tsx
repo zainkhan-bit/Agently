@@ -13,6 +13,7 @@ import { clearUnsaved, useUnsavedChanges } from "@/lib/unsavedChanges";
 import { usePageRouter } from "@/lib/usePageRouter";
 
 import { AgentForm, type AgentFields } from "./AgentForm";
+import { type Disclosure, noticeText } from "./disclosure";
 import { agentPath, agentsPath, builderPath } from "./paths";
 import type { Agent } from "./types";
 import { useBuilder } from "./useBuilder";
@@ -61,7 +62,7 @@ type Draft = { id: number; values: AgentFields; sample: boolean };
 
 export function DescribeAgent({ workspaceId }: { workspaceId: string }) {
   const { state, load } = useWorkspace(workspaceId);
-  const { builder, load: loadBuilder } = useBuilder(workspaceId);
+  const { builder, disclosure, load: loadBuilder, ask } = useBuilder(workspaceId);
 
   if (state.kind === "missing") return <WorkspaceMissing />;
   if (state.kind === "error") {
@@ -84,8 +85,8 @@ export function DescribeAgent({ workspaceId }: { workspaceId: string }) {
           Fill in the agent yourself instead
         </Link>
       </p>
-      {builder === "available" ? (
-        <Builder workspaceId={workspaceId} />
+      {builder === "available" && disclosure !== null ? (
+        <Builder workspaceId={workspaceId} disclosure={disclosure} onDisclosureChanged={ask} />
       ) : (
         <p>Drafts are not available on this server.</p>
       )}
@@ -93,7 +94,15 @@ export function DescribeAgent({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function Builder({ workspaceId }: { workspaceId: string }) {
+function Builder({
+  workspaceId,
+  disclosure,
+  onDisclosureChanged,
+}: {
+  workspaceId: string;
+  disclosure: Disclosure;
+  onDisclosureChanged: () => Promise<void>;
+}) {
   const router = usePageRouter();
   const [answers, setAnswers] = useState(EMPTY);
   const [errors, setErrors] = useState<Partial<Answers>>({});
@@ -134,7 +143,7 @@ function Builder({ workspaceId }: { workspaceId: string }) {
     setPending(true);
     try {
       const { data } = await apiPost<{ draft: AgentFields; sample: boolean }>(
-        `${builderPath(workspaceId)}/drafts`,
+        `${builderPath(workspaceId)}/drafts?disclosure=${disclosure}`,
         answers,
       );
       const { name, purpose, description, instructions } = data.draft;
@@ -144,6 +153,10 @@ function Builder({ workspaceId }: { workspaceId: string }) {
         sample: data.sample,
       }));
     } catch (error) {
+      if (error instanceof ApiError && error.code === "disclosure_changed") {
+        // Shows the new notice and keeps the answers. If this fails, the server refuses again.
+        await onDisclosureChanged().catch(() => {});
+      }
       const onFields = Object.entries(fieldErrors(error)).filter(([name]) =>
         QUESTIONS.some(({ field }) => field === name),
       );
@@ -176,6 +189,10 @@ function Builder({ workspaceId }: { workspaceId: string }) {
         aria-label="Questions"
         className="flex flex-col gap-4"
       >
+        {/* Always in the page, so that a new notice is announced. */}
+        <p role="note" aria-live="polite" id="answers-notice" className="font-semibold">
+          {noticeText(disclosure)}
+        </p>
         {QUESTIONS.map(({ field, label, required }) => {
           const id = `answer-${field}`;
           return (
@@ -191,7 +208,7 @@ function Builder({ workspaceId }: { workspaceId: string }) {
                 autoComplete="off"
                 aria-required={required}
                 aria-invalid={Boolean(errors[field])}
-                aria-describedby={errors[field] ? `${id}-error` : undefined}
+                aria-describedby={errors[field] ? `answers-notice ${id}-error` : "answers-notice"}
                 className="rounded-md border border-current px-3 py-2"
                 onChange={(event) => setAnswers({ ...answers, [field]: event.target.value })}
               />

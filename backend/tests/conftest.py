@@ -9,6 +9,7 @@ When DATABASE_URL is unset (or empty), DB tests are skipped and the run ends wit
 one-line summary so a skip is never mistaken for a pass.
 """
 
+import socket
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -27,6 +28,32 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 SKIP_REASON = "DATABASE_URL not set"
 _skipped_db_tests_key = pytest.StashKey[int]()
 _run_lock_key = pytest.StashKey[Connection]()
+
+
+class NetworkRefusedError(BaseException):
+    """Not an Exception, so that code under test cannot take it for a failed connection."""
+
+
+@pytest.fixture(autouse=True)
+def no_network(monkeypatch) -> None:
+    """Only this computer. PostgreSQL's driver connects in C and is not affected."""
+    real_connect, real_lookup = socket.socket.connect, socket.getaddrinfo
+
+    def check(host: object) -> None:
+        if host not in (None, "", "localhost", "127.0.0.1", "::1", b"localhost", b"127.0.0.1"):
+            raise NetworkRefusedError("tests must not use the network")
+
+    def connect(self, address):
+        if isinstance(address, tuple):
+            check(address[0])
+        return real_connect(self, address)
+
+    def lookup(host, *args, **kwargs):
+        check(host)
+        return real_lookup(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", connect)
+    monkeypatch.setattr(socket, "getaddrinfo", lookup)
 
 
 def configured_database_url() -> str | None:

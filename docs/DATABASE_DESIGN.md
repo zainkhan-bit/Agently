@@ -18,8 +18,9 @@ PostgreSQL 16+ (developed on 18), SQLAlchemy 2.x models, Alembic migrations. Mod
 | `memberships` | A user's role in a workspace | One per `(user_id, workspace_id)`. `role` is `owner` or `member` (check constraint, so adding a role later is a constraint swap, not an enum migration). A user can belong to many workspaces. |
 | `sessions` | Server-side login sessions (ADR-0003) | Stores only `token_hash`, unique and indexed; never the raw token. `expires_at` required, `revoked_at` nullable (set by logout). |
 | `agents` | Agents of a workspace | `status` is `active`, `paused` or `archived` (check constraint). `created_by` is nullable. |
-| `agent_versions` | Saved configurations | Unique per `(agent_id, number)`. `model` is always empty until Slice 3.1. `created_by` is nullable. `restored_from` is the number of the version a rollback copied: an earlier version of the same agent (composite foreign key and check), empty for every other save. |
+| `agent_versions` | Saved configurations | Unique per `(agent_id, number)`. `model` is always empty until agents can choose one. `created_by` is nullable. `restored_from` is the number of the version a rollback copied: an earlier version of the same agent (composite foreign key and check), empty for every other save. |
 | `auth_throttle_events` | Counted login, signup and agent-write attempts | One row per attempt and limit. `key_hash` is a SHA-256 of the scope plus normalised email and/or IP, or the user id for agent writes; no plaintext email. `created_at` is set by the application. Rows older than the longest throttle window are deleted whenever a new attempt is recorded, so the table stays bounded. Not linked to `users`: unknown emails are counted too. |
+| `provider_spend` | What real provider calls cost (ADR-0006) | One row per call, in nano-dollars: the worst case until the call succeeds, then the real cost with its token counts. Holds no text and names no person or workspace. Never cleaned up; deleting rows raises what may be spent. |
 
 ## Agents
 
