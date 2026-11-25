@@ -1,6 +1,6 @@
 # Project Status — Agently
 
-**Current milestone:** Phase 2 — Agent creation and configuration (Phase 1 exit gate met)
+**Current milestone:** Phase 2 built; its exit gate is met with the mock provider only (see Phase 2 exit gate)
 **Next smallest task:** Slice 3.1 — Provider contract and configuration (not started, waiting for the owner)
 
 ## Must fix before any deployment
@@ -50,6 +50,38 @@ Known gaps to fix or accept:
 - A distributed attacker can hold one account at the 50-failure ceiling (accepted).
 - Workspaces: nobody can be invited; rename, leave, role changes and removal have an API but no screen. Promoting a member who owns 20 workspaces reveals that fact; a member removed mid-request can receive the member list once.
 - Frontend: the Slice 1.4 follow-ups below.
+
+## Phase 2 exit gate
+
+Checked 2026-11-25, after Slice 2.4. **Both ROADMAP gates pass locally, but drafts are proven with the mock provider only.** There is no CI yet, so nothing re-runs these automatically. The numbers are browser checks.
+
+| Gate (`docs/ROADMAP.md`) | Result | Proof |
+|---|---|---|
+| Agents created, edited, paused | PASS | `backend/tests/test_agents_api.py`: `test_members_and_owners_can_manage_agents`, `test_only_the_allowed_status_changes_happen`, `test_outdated_edits_are_refused_even_with_identical_text`; `test_agent_concurrency.py`; `frontend/src/features/agents/agents.test.tsx`; `docs/manual-checks/agents-browser-check.js` (116) |
+| Drafts schema-validated | PASS with the mock; real provider BLOCKED | `backend/tests/test_agent_builder.py`: `test_a_draft_has_exactly_the_four_text_fields`, `test_bad_output_is_rejected_whole`, `test_output_cannot_set_other_fields`, `test_text_a_reviewer_cannot_see_is_rejected`; `frontend/src/features/agents/describe.test.tsx`; `docs/manual-checks/builder-browser-check.js` (42) |
+
+The build guide words the gate further (Slice 2.4):
+
+| Gate (`AGENT_BUILD_GUIDE.md`) | Result | Proof |
+|---|---|---|
+| Create by prompt | PASS with the mock; real provider BLOCKED | `test_members_generate_a_sample_draft_and_nothing_is_saved`; `builder-browser-check.js` |
+| Create manually, edit, pause | PASS | as above |
+| See it in your own workspace only | PASS | `backend/tests/test_tenant_isolation.py`, including `test_one_object_does_not_open_what_belongs_to_its_sibling`; isolation parts of `agents-browser-check.js` and `versions-browser-check.js` (59) |
+| Generated configuration grants no permissions | PASS for what the server accepts, whatever a model returns | `test_output_cannot_set_other_fields`, `test_generation_has_no_way_to_write_agents` (weak, see Slice 2.3) |
+| Versioned configuration (AGT-4) | PASS, except recording the version on an execution: BLOCKED until Phase 3 | `backend/tests/test_agent_versions.py`, `test_agent_concurrency.py`; `frontend/src/features/agents/versions.test.tsx` |
+
+**Proven on the mock only**
+
+- That a useful, valid draft comes back at all. The mock builds it from the answers.
+- Timeouts, rate limits and outages: simulated failures, never a real network or provider.
+- Token counts: made up by the mock.
+- Injection: hostile *output* is rejected by the server and hostile *input* stays inside its wrapper, but whether a real model obeys hostile input is untested.
+
+**Still open**
+
+- AGT-3 "paused agents cannot run": the rule and its test exist (`test_only_active_agents_may_run`), but nothing runs agents until Phase 3.
+- The member view of agents and versions is checked by API and component tests, not in a browser: nobody can be invited yet.
+- Everything under "Before enabling a real provider key" and "Must fix before any deployment".
 
 ## Slice log
 
@@ -370,4 +402,4 @@ Known gaps to fix or accept:
   - Guide 2.4 "execution metadata can identify the version" is BLOCKED until executions exist (Phase 3). Versions have permanent ids and numbers for it.
   - No side-by-side diff, labels or deletion of versions.
 - **Commit / push:** `feat(agents)` commit of 2026-11-25, pushed to `origin/main`.
-- **Next smallest task:** Phase 2 exit report, then Slice 3.1 (waiting for the owner)
+- **Next smallest task:** Slice 3.1 (waiting for the owner)
