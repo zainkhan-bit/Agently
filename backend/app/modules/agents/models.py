@@ -31,6 +31,8 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             f"status IN ({', '.join(repr(status) for status in STATUSES)})", name="status_valid"
         ),
         Index("ix_agents_workspace_id_created_at", "workspace_id", "created_at"),
+        # For foreign keys that must name the agent's own workspace.
+        UniqueConstraint("id", "workspace_id"),
     )
 
     workspace_id: Mapped[uuid.UUID] = mapped_column(

@@ -56,6 +56,14 @@ class Settings(BaseSettings):
     agent_write_limit: int = Field(default=60, gt=0)
     agent_write_window_minutes: int = Field(default=10, gt=0)
 
+    # Conversations are private to one person. Lowering a limit only blocks new ones.
+    conversation_limit_per_agent: int = Field(default=200, gt=0)
+    conversation_create_limit: int = Field(default=30, gt=0)
+    conversation_create_window_minutes: int = Field(default=60, gt=0)
+    message_limit_per_conversation: int = Field(default=500, gt=0)
+    user_message_max_characters: int = Field(default=8_000, gt=0)
+    assistant_message_max_characters: int = Field(default=32_000, gt=0)
+
     # Agent and workspace writes: the wait for each lock, and idleness while holding locks.
     write_lock_timeout_seconds: int = Field(default=5, gt=0, le=3600)
     write_idle_timeout_seconds: int = Field(default=30, gt=0, le=3600)

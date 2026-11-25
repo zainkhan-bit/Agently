@@ -4,6 +4,7 @@ import logging
 from collections.abc import Iterator
 from functools import lru_cache
 
+import psycopg
 from sqlalchemy import Engine, ExceptionContext, MetaData, create_engine, event, func, select, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -41,7 +42,8 @@ def get_engine() -> Engine:
     return create_engine(
         settings.database_url.get_secret_value(),
         pool_pre_ping=True,
-        # Logged errors must not carry emails, password hashes or token hashes.
+        # Logged errors must not carry emails, password hashes, token hashes or messages.
+        # What PostgreSQL itself repeats is removed by _keep_only_the_primary_message.
         hide_parameters=True,
         connect_args={"connect_timeout": settings.database_connect_timeout_seconds},
     )
@@ -87,6 +89,25 @@ def limit_write_time(db: Session) -> None:
             ),
         )
     )
+
+
+@event.listens_for(Engine, "handle_error")
+def _keep_only_the_primary_message(context: ExceptionContext) -> None:
+    """PostgreSQL's details repeat whole rows ("Failing row contains ..."), private text included.
+
+    Errors are logged in several places, so the text is removed here, before anyone sees them.
+    """
+    original = context.original_exception
+    if not isinstance(original, psycopg.Error):
+        return
+    primary = original.diag.message_primary
+    if primary is None:
+        return  # not from the server, such as a failed connection
+    original.args = (primary,)
+    wrapper = context.sqlalchemy_exception
+    if wrapper is not None:
+        kind = type(original)
+        wrapper.args = (f"({kind.__module__}.{kind.__name__}) {primary}",)
 
 
 @event.listens_for(Engine, "handle_error")

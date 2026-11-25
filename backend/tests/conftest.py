@@ -132,7 +132,7 @@ def database_url() -> str:
 def test_engine(database_url: str) -> Iterator[Engine]:
     """``agently_test``: recreated at session start, migrated to head, dropped at the end."""
     url = db_utils.recreate_database(database_url, db_utils.TEST_DATABASE_NAME)
-    engine = create_engine(url)
+    engine = create_engine(url, hide_parameters=True)  # like get_engine
     try:
         migrate(engine)
         yield engine

@@ -21,6 +21,8 @@ PostgreSQL 16+ (developed on 18), SQLAlchemy 2.x models, Alembic migrations. Mod
 | `agent_versions` | Saved configurations | Unique per `(agent_id, number)`. `model` is always empty until agents can choose one. `created_by` is nullable. `restored_from` is the number of the version a rollback copied: an earlier version of the same agent (composite foreign key and check), empty for every other save. |
 | `auth_throttle_events` | Counted login, signup and agent-write attempts | One row per attempt and limit. `key_hash` is a SHA-256 of the scope plus normalised email and/or IP, or the user id for agent writes; no plaintext email. `created_at` is set by the application. Rows older than the longest throttle window are deleted whenever a new attempt is recorded, so the table stays bounded. Not linked to `users`: unknown emails are counted too. |
 | `provider_spend` | What real provider calls cost (ADR-0006) | One row per call, in nano-dollars: the worst case until the call succeeds, then the real cost with its token counts, or zero for a call that was never sent or was refused unworked. Holds no text and names no person or workspace. Never cleaned up; deleting rows raises what may be spent. |
+| `conversations` | One person's private conversation with one agent | Composite foreign keys, both cascading: `(agent_id, workspace_id)` to the agent of that workspace and `(user_id, workspace_id)` to the person's membership. `message_count` is also the last sequence number. `updated_at` is the last message. |
+| `messages` | Private text | Unique `(conversation_id, sequence)`, which also serves "the last N". `role` is `user` or `assistant`. `agent_version` is set for assistant messages and only for them (check), and is an existing version of the same agent (composite foreign key, cascading). Never changed after it is written. |
 
 ## Agents
 
@@ -30,19 +32,29 @@ An agent's configuration lives only in its versions; `agents.current_version` sa
 
 **Write timeouts:** agent and workspace writes first set transaction-local `lock_timeout` (5 s for each lock) and `idle_in_transaction_session_timeout` (30 s), in `limit_write_time`. Waiters give up, and a stalled holder is ended and rolled back, both as 503 `busy`. A connection lost during COMMIT stays a 500, because the commit may have succeeded.
 
+## Conversations
+
+Only the creator can reach a conversation, through `get_conversation`. Storing a message is an internal operation (`store_message`); it locks workspace, membership, agent, then the conversation, so sequence numbers have no gaps. Limits (configurable): 200 conversations per person and agent, 30 created per person and hour, 500 messages per conversation, 8,000 characters per user message and 32,000 per assistant message.
+
+Message text must not reach logs. Parameters are hidden (`hide_parameters`), the engine's error hook keeps only PostgreSQL's primary message (details repeat whole rows), and SQLAlchemy and psycopg never log below WARNING. PostgreSQL's own server log is outside the application: it may record failed statements, and its settings are a deployment matter.
+
 ## Deletion behaviour (PRD DATA-1)
 
 Deletion is a **hard delete**. Rows are removed immediately: there are no `deleted_at` columns and no purge job. The database enforces the cascades with `ON DELETE CASCADE`, so they hold for ORM deletes and raw SQL alike:
 
-- Deleting a **workspace** deletes its memberships, agents and their versions. Its users remain.
-- Deleting an **agent** (owners only, any status) deletes its versions. Later, its conversations and executions too; usage rows survive (ADR-0005).
-- Deleting a **user** deletes their sessions and memberships. The workspaces they belonged to remain. Agents and versions they created remain with an empty `created_by`.
+- Deleting a **workspace** deletes its memberships, agents, their versions and conversations. Its users remain.
+- Deleting an **agent** (owners only, any status) deletes its versions and everyone's conversations with it. Later its executions too; usage rows survive (ADR-0005).
+- Deleting a **conversation** (its creator only) deletes its messages. Nothing expires with age.
+- Ending a **membership** (leaving or removal) deletes that person's conversations in the workspace.
+- Deleting a **user** deletes their sessions and memberships, and with those their conversations. The workspaces they belonged to remain. Agents and versions they created remain with an empty `created_by`.
 
 **Last owner:** leaving, removing or demoting a workspace's last owner is refused. The service locks the workspace row and then its owner memberships (`SELECT … FOR UPDATE`) and decides from the locked rows, so simultaneous requests cannot leave it without an owner. A person owns at most 20 workspaces; that check locks the user's row first.
 
 **Known gap:** account deletion does not exist in the app yet. Deleting a user directly in the database still cascades and can leave a workspace with no owner. The slice that adds account deletion must apply the last-owner rule, lock in the same order (every workspace of the user, memberships, then user; otherwise it can deadlock with an agent write), and handle a create or promotion waiting on the deleted user.
 
-Later tables (conversations, memories, knowledge sources) will document their deletion behaviour here when they are added.
+There are no backups yet (Phase 6). Once there are, deleted rows stay in them until they expire.
+
+Later tables (memories, knowledge sources) will document their deletion behaviour here when they are added.
 
 ## Migration workflow (from `backend/`)
 

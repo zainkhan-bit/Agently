@@ -24,6 +24,8 @@ APP_TABLES = {
     "agents",
     "agent_versions",
     "provider_spend",
+    "conversations",
+    "messages",
 }
 
 

@@ -1,12 +1,18 @@
 # Project Status — Agently
 
-**Current milestone:** Phase 3 started: Slice 3.1 (Gemini adapter) is done
-**Next smallest task:** Slice 3.2 — Conversation and message storage (not started, waiting for the owner)
+**Current milestone:** Phase 3: Slices 3.1 (Gemini adapter) and 3.2 (conversation storage) are done
+**Next smallest task:** Slice 3.3 — Runtime service without tools (mock only)
 
 ## Must fix before any deployment
 
 - Run uvicorn with `--no-proxy-headers`, and put an edge proxy that appends to `X-Forwarded-For` in front (see Slice 1.2).
 - Gemini (ADR-0006): the paid tier (production refuses free), a monthly spend cap set in AI Studio first, nobody under 18, and no users in the EEA, UK or Switzerland on the free tier.
+
+- PostgreSQL's own log may record rows that a constraint refuses, message text included. Set `log_error_verbosity = terse` on the production server (review of Slice 3.2).
+
+## Must do before Slice 3.4 ships
+
+- Warn owners that deleting an agent or removing a member also deletes other people's private conversations (ADR-0005). Removing a member has no screen yet, so whichever slice adds that screen needs the warning too.
 
 ## Before enabling a real provider key
 
@@ -24,6 +30,7 @@ Agreed with the owner on 2026-11-24. Built in Slice 3.1:
 - ~~Slice 1.1 blocked on local PostgreSQL credentials~~ — resolved 2026-11-21: `GET /api/health/ready` returns `database: ok`.
 - **Known gap (owner: the slice that adds account deletion):** it must refuse to delete a workspace's last owner, or transfer or delete the workspace first, with tests. Slice 1.3 enforces this for leaving, removal and demotion; account deletion does not exist in the app yet. Lock order and edge cases: `docs/DATABASE_DESIGN.md`.
 - The real-provider tests of Slices 2.3 and 3.1 passed on 2026-11-25.
+- **Slice 3.2, BLOCKED:** breaking one guard at a time. The run was stopped by the system for low memory before its first result, and must not be restarted without the owner.
 
 ## Phase 1 exit gate
 
@@ -425,3 +432,28 @@ The build guide words the gate further (Slice 2.4):
 - **Known limitations:** the spending limit rests on Google's token counts and our price list; the tier is declared, not detected; `provider_spend` is never cleaned up; opening a database connection for a reservation is not covered by the provider deadline.
 - **Commit / push:** branch `slice-3.1` merged into `main` and pushed on 2026-11-26. The local `.env` is switched to Gemini after the push.
 - **Next smallest task:** Slice 3.2 — Conversation and message storage (not started, waiting for the owner)
+
+### Slice 3.2 — Conversation and message storage
+- **Date:** 2026-11-26 (owner away)
+- **What changed:** Private conversations between one person and one agent: create, list, read in pages, delete (migration `0006`). Only the creator can reach one; owners and teammates get the 404 of a missing id. Every assistant message names a version of the same agent, enforced by the database. Storing messages is internal; no route accepts any. Deleted with the agent, workspace, account, or when the person leaves or is removed. Numbers: 8,000 and 32,000 characters, 500 messages, 200 conversations per person and agent, 30 created per hour.
+- **Log safety:** `hide_parameters` was already on, but PostgreSQL's error details repeat whole rows. The engine now keeps only the primary message, also for the server's own traceback logging. SQLAlchemy and psycopg stay at WARNING at every `LOG_LEVEL`, because SQLAlchemy logs result rows at DEBUG.
+- **Isolation:** all five routes joined the matrix by themselves. New: an owner and a member of the same workspace attack every route that names something private, with positive controls; a planted unguarded route is caught; a conversation may be named in paths only.
+- **Plan:** `docs/plans/2026-11-26-0215-feat-conversation-storage-plan.md`, with the assumptions made while the owner was away.
+- **Files/modules affected:** `backend/app/modules/conversations/`, `backend/app/core/{config,database,logs}.py`, `backend/app/modules/{agents,identity}/`, `backend/migrations/versions/0006_conversations.py`, `backend/tests/`, `.gstack/pregate.json`, docs
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (1336) | `backend: .venv\Scripts\python -m pytest` | No skips |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Migration on dev DB | PASS | `alembic upgrade head`, `check`, `downgrade -1`, `upgrade head`, `check` | |
+| Test sensitivity | NOT RUN | 36 guards prepared | Stopped by the system for low memory before the first result; not restarted. It left one guard removed in the working tree, which was restored before the final test run and the commit |
+| Frontend | unchanged | | |
+
+- **Review:** one independent Claude reviewer (privacy and isolation), by reading only. No P0, P1 or P2. Five P3s; four fixed: weak concurrency tests, a DEBUG test that proved nothing, a matrix rule that knew only one parameter name, and missing `Cache-Control: private, no-store`. The fixes were not reviewed again.
+- **Known limitations:**
+  - P3, recorded: PostgreSQL's own server log (see "Must fix before any deployment"). Not reachable through `store_message` today.
+  - Collections have no id to attack: the conversation list has its own test, a future aggregate would need one.
+  - The list shows dates and counts only; titles are deferred.
+- **Commit / push:** `feat(conversations)` commit of 2026-11-26, pushed to `origin/main`.
+- **Next smallest task:** Slice 3.3 — Runtime service without tools

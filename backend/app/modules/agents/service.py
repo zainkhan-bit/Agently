@@ -166,7 +166,7 @@ def roll_back(
 def duplicate_agent(
     db: Session, context: WorkspaceContext, agent_id: uuid.UUID
 ) -> AgentWithVersion:
-    source = _lock_agent(db, context, agent_id)
+    source = lock_agent(db, context, agent_id)
     configuration = _configuration(_current_version(db, source))
     configuration["name"] = f"Copy of {configuration['name']}"[:NAME_MAX].rstrip()
     created = _add_agent(db, context, PAUSED, configuration)
@@ -177,7 +177,7 @@ def duplicate_agent(
 def change_status(
     db: Session, context: WorkspaceContext, agent_id: uuid.UUID, action: str
 ) -> AgentWithVersion:
-    agent = _lock_agent(db, context, agent_id)
+    agent = lock_agent(db, context, agent_id)
     allowed, result = TRANSITIONS[action]
     if agent.status not in allowed:
         raise StatusConflictError(f"Cannot {action} an agent that is {agent.status}.")
@@ -267,7 +267,7 @@ def _with_version():
     )
 
 
-def _lock_agent(db: Session, context: WorkspaceContext, agent_id: uuid.UUID) -> Agent:
+def lock_agent(db: Session, context: WorkspaceContext, agent_id: uuid.UUID) -> Agent:
     lock_for_member_write(db, context)
     agent = db.scalar(
         select(Agent)
@@ -284,7 +284,7 @@ def _lock_agent(db: Session, context: WorkspaceContext, agent_id: uuid.UUID) -> 
 def _lock_for_save(
     db: Session, context: WorkspaceContext, agent_id: uuid.UUID, version: int
 ) -> Agent:
-    agent = _lock_agent(db, context, agent_id)
+    agent = lock_agent(db, context, agent_id)
     if agent.status == ARCHIVED:
         raise AgentArchivedError()
     if agent.current_version != version:

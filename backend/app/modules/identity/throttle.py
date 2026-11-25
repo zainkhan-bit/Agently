@@ -23,6 +23,7 @@ LOGIN_ACCOUNT_IP = "login_account_ip"
 LOGIN_IP = "login_ip"
 SIGNUP_IP = "signup_ip"
 AGENT_WRITE = "agent_write"
+CONVERSATION_CREATE = "conversation_create"
 GENERATION_USER = "generation_user"
 GENERATION_WORKSPACE = "generation_workspace"
 
@@ -64,6 +65,13 @@ def agent_write_limits(user_id: uuid.UUID) -> list[Limit]:
     settings = get_settings()
     window = settings.agent_write_window_minutes
     return [_limit(AGENT_WRITE, settings.agent_write_limit, window, str(user_id))]
+
+
+def conversation_create_limits(user_id: uuid.UUID) -> list[Limit]:
+    settings = get_settings()
+    window = settings.conversation_create_window_minutes
+    maximum = settings.conversation_create_limit
+    return [_limit(CONVERSATION_CREATE, maximum, window, str(user_id))]
 
 
 def generation_limits(user_id: uuid.UUID, workspace_id: uuid.UUID) -> list[Limit]:
@@ -139,6 +147,7 @@ def _delete_expired(session: Session) -> None:
             settings.signup_window_minutes,
             settings.agent_write_window_minutes,
             settings.generation_window_minutes,
+            settings.conversation_create_window_minutes,
         )
     )
     session.execute(

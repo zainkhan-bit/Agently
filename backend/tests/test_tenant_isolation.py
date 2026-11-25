@@ -16,9 +16,13 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.main import create_app
-from app.models import AgentVersion, Base
+from app.models import AgentVersion, Base, Conversation, Membership
+from app.modules.conversations.dependencies import get_conversation
+from app.modules.conversations.service import store_message
 from app.modules.identity.router import PUBLIC_ROUTES
 from app.modules.workspaces.dependencies import get_workspace_context
+from app.modules.workspaces.models import Workspace
+from app.modules.workspaces.service import WorkspaceContext
 from tests.auth_helpers import register
 
 VERBS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
@@ -89,6 +93,10 @@ def _nested_swaps(object_swaps) -> list[tuple[str, str, str]]:
 
 
 NESTED_SWAPS = _nested_swaps(OBJECT_SWAPS)
+# What all members of a workspace share. Adding one here is a privacy decision: everything else
+# is private to one person, so teammates attack it too, whatever their role.
+SHARED = {"workspace_id", "user_id", "agent_id", "version_id"}
+PRIVATE_MATRIX = [(verb, path) for verb, path in MATRIX if _parameters(path) - SHARED]
 GET_PATHS = [path for verb, path in MATRIX if verb == "GET"]
 
 
@@ -128,6 +136,45 @@ def test_matrix_covers_the_known_endpoints() -> None:
     assert set(NESTED_SWAPS) >= {
         (verb, path, name) for verb, path in version_routes for name in ("agent_id", "version_id")
     }
+    chats = f"{agent}/conversations"
+    chat = f"{chats}/{{conversation_id}}"
+    private = {("GET", chat), ("DELETE", chat), ("GET", f"{chat}/messages")}
+    assert set(MATRIX) >= private | {("GET", chats), ("POST", chats)}
+    assert set(PRIVATE_MATRIX) >= private
+    assert set(NESTED_SWAPS) >= {
+        (verb, path, name) for verb, path in private for name in ("agent_id", "conversation_id")
+    }
+
+
+def _private_but_unchecked(app) -> set[tuple[str, str]]:
+    """Routes naming a conversation without the dependency that requires its creator."""
+    return {
+        (verb, route.path)
+        for route in iter_route_contexts(app.routes)
+        if getattr(route, "dependant", None) is not None
+        and _parameters(route.path) - SHARED
+        and not _depends_on(route.dependant, get_conversation)
+        for verb in _verbs(route)
+    }
+
+
+def test_every_route_naming_a_conversation_requires_its_creator() -> None:
+    assert _private_but_unchecked(create_app()) == set()
+
+
+def test_a_conversation_is_named_in_the_path_only() -> None:
+    """Not in a body or query string, where the creator check and the attacks would miss it."""
+    api = create_app().openapi()
+    elsewhere = [
+        (path, parameter["name"])
+        for path, operations in api["paths"].items()
+        for operation in operations.values()
+        for parameter in operation.get("parameters", [])
+        if parameter["in"] != "path" and "conversation" in parameter["name"]
+    ]
+    assert elsewhere == []
+    for name, schema in api["components"]["schemas"].items():
+        assert "conversation_id" not in schema.get("properties", {}), name
 
 
 @pytest.mark.parametrize(
@@ -163,7 +210,7 @@ def test_unguarded_websockets_and_mounts_are_caught() -> None:
 
 
 @pytest.fixture
-def tenants(make_client):
+def tenants(make_client, db_session):
     """Signed-in user A, and user B with a workspace A has nothing to do with."""
 
     class Tenants:
@@ -187,7 +234,42 @@ def tenants(make_client):
         "user_id": t.b_id,
         **_agent(t.b, t.b_other_workspace, "B other agent"),
     }
+    for children, workspace in (
+        (t.b_children, t.b_workspace),
+        (t.b_sibling_children, t.b_workspace),
+        (t.b_other_children, t.b_other_workspace),
+    ):
+        _say(db_session, workspace, children, "B secret message")
+    _say(db_session, t.a_workspace, t.a_children, "A message")
+    # B's teammates: an owner and a member, each with a conversation of their own.
+    t.teammates = {}
+    for role in ("owner", "member"):
+        client = make_client()
+        user_id = register(client, email=f"{role}-mate@example.com").json()["id"]
+        db_session.add(
+            Membership(user_id=uuid.UUID(user_id), workspace_id=uuid.UUID(t.b_workspace), role=role)
+        )
+        db_session.commit()
+        own = client.post(f"{_agent_url(t.b_workspace, t.b_children)}/conversations")
+        assert own.status_code == 201
+        t.teammates[role] = (client, own.json()["id"])
     return t
+
+
+def _agent_url(workspace_id: str, children: dict) -> str:
+    return f"{PREFIX}/{workspace_id}/agents/{children['agent_id']}"
+
+
+def _say(session, workspace_id: str, children: dict, text_: str) -> None:
+    """A message in the conversation, so that reading it would leak something."""
+    context = WorkspaceContext(
+        workspace=session.get(Workspace, uuid.UUID(workspace_id)),
+        user_id=uuid.UUID(children["user_id"]),
+        role="owner",
+    )
+    agent, chat = (uuid.UUID(children[name]) for name in ("agent_id", "conversation_id"))
+    store_message(session, context, agent, chat, role="user", content=text_)
+    session.commit()
 
 
 def _agent(client, workspace_id: str, name: str) -> dict[str, str]:
@@ -202,7 +284,13 @@ def _agent(client, workspace_id: str, name: str) -> dict[str, str]:
     assert edited.status_code == 200
     first = client.get(f"{url}/versions").json()["items"][-1]
     assert first["number"] == 1
-    return {"agent_id": response.json()["id"], "version_id": first["id"]}
+    chat = client.post(f"{url}/conversations")
+    assert chat.status_code == 201
+    return {
+        "agent_id": response.json()["id"],
+        "version_id": first["id"],
+        "conversation_id": chat.json()["id"],
+    }
 
 
 def _fill(path: str, workspace_id, children: dict) -> str:
@@ -241,6 +329,8 @@ def _assert_no_tenant_data(tenants, response) -> None:
         tenants.b_workspace,
         tenants.b_children["agent_id"],
         tenants.b_children["version_id"],
+        tenants.b_children["conversation_id"],
+        "B secret message",
     ):
         assert secret not in response.text
 
@@ -345,7 +435,12 @@ def test_reading_one_agent_shows_nothing_of_its_sibling(tenants, path) -> None:
     ):
         response = tenants.b.get(_fill(path, tenants.b_workspace, own))
         assert response.status_code == 200
-        for other in (name, sibling["agent_id"], sibling["version_id"]):
+        for other in (
+            name,
+            sibling["agent_id"],
+            sibling["version_id"],
+            sibling["conversation_id"],
+        ):
             assert other not in response.text
 
 
@@ -374,6 +469,74 @@ def test_a_new_version_route_without_the_agent_check_is_caught(tenants, auth_app
     assert (response.status_code, response.json()) == (200, "B sibling")  # the attack would fail
 
 
+@pytest.mark.db
+@pytest.mark.parametrize("role", ["owner", "member"])
+@pytest.mark.parametrize(("verb", "path"), PRIVATE_MATRIX)
+def test_teammates_cannot_tell_that_a_conversation_exists(
+    tenants, db_session, verb, path, role
+) -> None:
+    """Same workspace, same agent, any role: only the creator check can refuse this."""
+    client, own = tenants.teammates[role]
+    before = _snapshot(db_session)
+    url = _fill(path, tenants.b_workspace, tenants.b_children)
+    missing = _fill(
+        path, tenants.b_workspace, tenants.b_children | {"conversation_id": uuid.uuid4()}
+    )
+    for body in VALID_BODIES:
+        response = client.request(verb, url, json=body)
+        assert response.status_code == 404
+        assert _error(response) == _error(client.request(verb, missing, json=body))
+        assert "B secret message" not in response.text
+    assert _snapshot(db_session) == before
+    # Positive control: the same request for their own conversation works.
+    mine = _fill(path, tenants.b_workspace, tenants.b_children | {"conversation_id": own})
+    statuses = [client.request(verb, mine, json=body).status_code for body in VALID_BODIES]
+    assert any(200 <= status < 300 for status in statuses)
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("role", ["owner", "member"])
+@pytest.mark.parametrize("path", GET_PATHS)
+def test_nothing_a_teammate_reads_shows_a_private_conversation(tenants, path, role) -> None:
+    client, own = tenants.teammates[role]
+    children = tenants.b_children | {"conversation_id": own}
+    response = client.get(_fill(path, tenants.b_workspace, children))
+    assert response.status_code == 200
+    for private in (tenants.b_children["conversation_id"], "B secret message"):
+        assert private not in response.text
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("role", ["owner", "member"])
+def test_a_teammates_list_has_only_their_own_conversations(tenants, role) -> None:
+    client, own = tenants.teammates[role]
+    page = client.get(f"{_agent_url(tenants.b_workspace, tenants.b_children)}/conversations").json()
+    assert ([item["id"] for item in page["items"]], page["total"]) == ([own], 1)
+
+
+@pytest.mark.db
+def test_a_new_conversation_route_without_the_creator_check_is_caught(tenants, auth_app) -> None:
+    """Planted: it checks membership and agent, but not who the conversation belongs to."""
+
+    def planted(
+        agent_id: uuid.UUID,
+        conversation_id: uuid.UUID,
+        db: Session = Depends(get_db),  # noqa: B008
+        _: object = Depends(get_workspace_context),  # noqa: B008
+    ) -> int:
+        chat = db.get(Conversation, conversation_id)
+        return chat.message_count if chat and chat.agent_id == agent_id else -1
+
+    path = f"{PREFIX}/{{workspace_id}}/agents/{{agent_id}}/conversations/{{conversation_id}}/new"
+    auth_app.add_api_route(path, planted, methods=["GET"])
+    assert _private_but_unchecked(auth_app) == {("GET", path)}
+    guarded, _ = _classify(auth_app)
+    assert ("GET", path) in guarded  # so the generated matrix would include it
+    client, _ = tenants.teammates["member"]
+    response = client.get(_fill(path, tenants.b_workspace, tenants.b_children))
+    assert (response.status_code, response.json()) == (200, 1)  # the attack would fail
+
+
 def test_a_parameter_without_a_real_object_fails() -> None:
     """The attacks need real ids: an unknown parameter cannot be filled in."""
     with pytest.raises(KeyError):
@@ -393,8 +556,11 @@ def test_reading_your_own_workspace_shows_only_that_workspace(tenants, path) -> 
         "B other agent",
         tenants.b_other_workspace,
         tenants.b_other_children["agent_id"],
+        tenants.b_other_children["conversation_id"],
         tenants.a_workspace,
         tenants.a_children["agent_id"],
+        tenants.a_children["conversation_id"],
+        "A message",
     ):
         assert other not in response.text
 
@@ -448,5 +614,6 @@ def test_list_never_shows_another_tenants_workspace(tenants) -> None:
 def test_snapshot_sees_every_tenant_table(tenants, db_session) -> None:
     snapshot = _snapshot(db_session)
     names = {"users", "sessions", "workspaces", "memberships", "agents", "agent_versions"}
+    names |= {"conversations", "messages"}
     assert names <= set(snapshot)
     assert all(snapshot[name] for name in names)
