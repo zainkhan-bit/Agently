@@ -1,5 +1,6 @@
 """Which provider this server uses. Chosen by configuration only, never by a request."""
 
+from functools import lru_cache
 from typing import Annotated, Literal
 
 from fastapi import Depends
@@ -16,14 +17,19 @@ from app.modules.providers.spending import MeteredProvider
 Disclosure = Literal["none", "gemini_free", "gemini_paid"]
 
 
+@lru_cache(maxsize=1)
+def _gemini(key: str, model: str) -> Provider:
+    """Once per process: every builder request asks for the provider."""
+    spec = GEMINI_MODELS[model]
+    return MeteredProvider(GeminiProvider(key, spec), spec, get_session_factory())
+
+
 def get_provider() -> Provider | None:
     settings = get_settings()
     if settings.model_provider == "mock":
         return MockProvider(settings.mock_provider_scenario)
     if settings.model_provider == "gemini":
-        key = settings.check_gemini()
-        spec = GEMINI_MODELS[settings.gemini_model]
-        return MeteredProvider(GeminiProvider(key, spec), spec, get_session_factory())
+        return _gemini(settings.check_gemini(), settings.gemini_model)
     return None
 
 

@@ -414,13 +414,13 @@ The build guide words the gate further (Slice 2.4):
 
 | Check | Result | Command | Notes |
 |---|---|---|---|
-| Backend tests with real DB | PASS (1150) | `backend: .venv\Scripts\python -m pytest` | No skips |
+| Backend tests with real DB | PASS (1151) | `backend: .venv\Scripts\python -m pytest` | No skips |
 | Backend lint/format, migration on dev DB | PASS | `ruff check .`, `ruff format --check .`, `alembic upgrade head`, `check` | |
-| Frontend | PASS (192) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
+| Frontend | PASS (194) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
 | Browser check, production build, mock | PASS (54) | `docs/manual-checks/builder-browser-check.js` | Other browser checks not re-run |
 | Test sensitivity, backend | 55 of 55 caught | broke one guard at a time | 52 at first; the three survivors were missing tests, added. Frontend guards not mutated |
 | Real provider | PASS (draft and stream) | `python -m scripts.gemini_check --send` | 2026-11-25, three calls, `gemini-3.5-flash-lite`, free tier. Draft: valid, no fence, 409 tokens in, 131 out, 2.6 s. The first stream prompt (counting to thirty) got `provider_refused`, cause not recorded; refusal reasons from a fixed list are now logged, and with a new prompt the stream passed: 6 pieces, 29 in, 102 out, 1.6 s |
 
-- **Review:** self-review only so far. The owner runs `/code-review ultra`; nothing is committed until its findings are fixed.
+- **Review:** owner-run ultrareview of `a715c17`: one normal finding, two nits. Fixed: answers were lost when drafts were switched off while the form was open; the Gemini provider was rebuilt on every request. OPEN, owner's decision: failed calls keep their reservation even when Google was never called or does not charge. The fixes were not reviewed again.
 - **Known limitations:** the spending limit rests on Google's token counts and our price list; the tier is declared, not detected; `provider_spend` is never cleaned up; opening a database connection for a reservation is not covered by the provider deadline.
 - **Commit / push:** committed on the local branch `slice-3.1` for review. Not merged, not pushed. The local `.env` stays on the mock until it is.

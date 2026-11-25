@@ -62,7 +62,7 @@ type Draft = { id: number; values: AgentFields; sample: boolean };
 
 export function DescribeAgent({ workspaceId }: { workspaceId: string }) {
   const { state, load } = useWorkspace(workspaceId);
-  const { builder, disclosure, load: loadBuilder, ask } = useBuilder(workspaceId);
+  const { builder, disclosure, load: loadBuilder, refresh } = useBuilder(workspaceId);
 
   if (state.kind === "missing") return <WorkspaceMissing />;
   if (state.kind === "error") {
@@ -85,8 +85,13 @@ export function DescribeAgent({ workspaceId }: { workspaceId: string }) {
           Fill in the agent yourself instead
         </Link>
       </p>
-      {builder === "available" && disclosure !== null ? (
-        <Builder workspaceId={workspaceId} disclosure={disclosure} onDisclosureChanged={ask} />
+      {(builder === "available" || builder === "closed") && disclosure !== null ? (
+        <Builder
+          workspaceId={workspaceId}
+          disclosure={disclosure}
+          closed={builder === "closed"}
+          onRefresh={refresh}
+        />
       ) : (
         <p>Drafts are not available on this server.</p>
       )}
@@ -97,11 +102,14 @@ export function DescribeAgent({ workspaceId }: { workspaceId: string }) {
 function Builder({
   workspaceId,
   disclosure,
-  onDisclosureChanged,
+  closed,
+  onRefresh,
 }: {
   workspaceId: string;
   disclosure: Disclosure;
-  onDisclosureChanged: () => Promise<void>;
+  /** Answers are kept, but nobody can type or generate. */
+  closed: boolean;
+  onRefresh: () => Promise<void>;
 }) {
   const router = usePageRouter();
   const [answers, setAnswers] = useState(EMPTY);
@@ -133,7 +141,7 @@ function Builder({
 
   async function generate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (inFlight.current || saving) return;
+    if (inFlight.current || saving || closed) return;
     setFailure(null);
     const found = check(answers);
     setErrors(found);
@@ -155,7 +163,7 @@ function Builder({
     } catch (error) {
       if (error instanceof ApiError && error.code === "disclosure_changed") {
         // Shows the new notice and keeps the answers. If this fails, the server refuses again.
-        await onDisclosureChanged().catch(() => {});
+        await onRefresh().catch(() => {});
       }
       const onFields = Object.entries(fieldErrors(error)).filter(([name]) =>
         QUESTIONS.some(({ field }) => field === name),
@@ -191,8 +199,24 @@ function Builder({
       >
         {/* Always in the page, so that a new notice is announced. */}
         <p role="note" aria-live="polite" id="answers-notice" className="font-semibold">
-          {noticeText(disclosure)}
+          {closed ? "" : noticeText(disclosure)}
         </p>
+        {closed && (
+          <div className="flex flex-col gap-2">
+            <p role="alert">Drafts are not available right now. Your answers are still here.</p>
+            <button
+              type="button"
+              className={buttonClass}
+              onClick={() => {
+                // This button goes away when it works: keep focus on the page, not lost.
+                document.getElementById("content")?.focus();
+                void onRefresh().catch(() => {});
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
         {QUESTIONS.map(({ field, label, required }) => {
           const id = `answer-${field}`;
           return (
@@ -204,7 +228,7 @@ function Builder({
                 id={id}
                 rows={3}
                 value={answers[field]}
-                readOnly={pending || saving}
+                readOnly={pending || saving || closed}
                 autoComplete="off"
                 aria-required={required}
                 aria-invalid={Boolean(errors[field])}
@@ -241,7 +265,7 @@ function Builder({
           </div>
         )}
         <p role="status">{pending ? "Generating a draft. This can take a moment." : ""}</p>
-        <button type="submit" aria-disabled={pending || saving} className={buttonClass}>
+        <button type="submit" aria-disabled={pending || saving || closed} className={buttonClass}>
           {pending ? "Generating…" : draft ? "Generate a new draft" : "Generate draft"}
         </button>
       </form>

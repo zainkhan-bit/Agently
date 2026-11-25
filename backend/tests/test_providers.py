@@ -193,7 +193,9 @@ GEMINI = {
 @pytest.fixture
 def gemini_env(env, monkeypatch):
     monkeypatch.setattr(selection, "get_session_factory", lambda: None)
-    return lambda **values: env(**(GEMINI | values))
+    selection._gemini.cache_clear()
+    yield lambda **values: env(**(GEMINI | values))
+    selection._gemini.cache_clear()
 
 
 def test_gemini_is_always_behind_the_spending_limit(gemini_env) -> None:
@@ -201,6 +203,17 @@ def test_gemini_is_always_behind_the_spending_limit(gemini_env) -> None:
     provider = selection.get_provider()
     assert type(provider) is MeteredProvider and type(provider._inner) is GeminiProvider
     create_app()
+
+
+def test_gemini_is_built_once_until_its_setup_changes(gemini_env) -> None:
+    gemini_env()
+    first = selection.get_provider()
+    assert selection.get_provider() is first
+    gemini_env(GEMINI_API_KEY="AIza-OTHER")
+    second = selection.get_provider()
+    assert second is not first and second._inner._api_key == "AIza-OTHER"
+    gemini_env(GEMINI_MODEL="gemini-3.8-flash")
+    assert selection.get_provider()._spec.name == "gemini-3.8-flash"
 
 
 def test_the_tests_never_see_a_real_provider_or_key() -> None:

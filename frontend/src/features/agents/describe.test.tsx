@@ -384,6 +384,29 @@ describe("who receives the answers", () => {
     expect(posts()).toHaveLength(2);
   });
 
+  it.each([
+    ["drafts are switched off", { available: false, disclosure: "none" }],
+    ["the new notice is unknown", { available: true, disclosure: "something new" }],
+  ])("keeps the answers, and lets nobody type, when %s", async (_, status) => {
+    routes[DRAFTS] = () => fail(409, "disclosure_changed", "Not sent.");
+    await open();
+    answer();
+    routes[`GET ${BUILDER}`] = () => Response.json(status);
+    generate();
+    await screen.findByRole("button", { name: "Retry" });
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+    const first = await screen.findByLabelText(/What is the agent for/);
+    expect(first).toHaveValue("Orders");
+    expect(first).toHaveAttribute("readonly");
+    generate();
+    expect(posts()).toHaveLength(1);
+    serve("gemini_free");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("note")).toHaveTextContent(free));
+    expect(first).toHaveValue("Orders");
+    expect(first).not.toHaveAttribute("readonly");
+  });
+
   it("keeps the answers when the new notice cannot be loaded", async () => {
     routes[DRAFTS] = () => fail(409, "disclosure_changed", "Not sent.");
     await open();
