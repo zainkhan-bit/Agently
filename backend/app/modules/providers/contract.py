@@ -82,9 +82,12 @@ class ProviderError(AppError):
     status_code = 503
     code = "provider_unavailable"
     message = "The AI provider is not available right now. Please try again later."
+    # True only when nothing was sent, or the provider refused it before doing any work.
+    uncharged = False
 
-    def __init__(self) -> None:
+    def __init__(self, *, uncharged: bool = False) -> None:
         super().__init__()
+        self.uncharged = uncharged
 
 
 class ProviderTimeoutError(ProviderError):

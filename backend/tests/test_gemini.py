@@ -162,16 +162,18 @@ def test_an_answer_stopped_at_the_token_limit_is_returned() -> None:
 @pytest.mark.parametrize("tokens", [0, -1, LITE.max_output_tokens + 1])
 def test_calls_above_the_models_limits_are_not_sent(tokens) -> None:
     server = Server()
-    with pytest.raises(ProviderError):
+    with pytest.raises(ProviderError) as caught:
         complete(server, tokens=tokens)
+    assert caught.value.uncharged is True
     assert server.requests == []
 
 
 @pytest.mark.parametrize("timeout", [0, -1])
 def test_calls_without_time_are_not_sent(timeout) -> None:
     server = Server()
-    with pytest.raises(ProviderError):
+    with pytest.raises(ProviderError) as caught:
         complete(server, timeout=timeout)
+    assert caught.value.uncharged is True
     assert server.requests == []
 
 
@@ -200,6 +202,7 @@ def test_error_statuses(status, body, error) -> None:
     with pytest.raises(ProviderError) as caught:
         complete(server)
     assert type(caught.value) is error
+    assert caught.value.uncharged is (status in (401, 402, 403, 404, 429))
     assert len(server.requests) == 1  # no retry
 
 
@@ -238,6 +241,41 @@ def test_a_long_error_is_not_read_to_its_end() -> None:
     with pytest.raises(ProviderError):
         complete(Server(body(), 500))
     assert len(read) < 100
+
+
+@pytest.mark.parametrize(
+    ("failure", "uncharged"),
+    [
+        (httpx.ConnectTimeout("x"), True),
+        (httpx.ReadTimeout("x"), False),
+        (httpx.WriteTimeout("x"), False),
+        (httpx.ReadError("x"), False),
+        (httpx.WriteError("x"), False),
+        (httpx.RemoteProtocolError("x"), False),
+    ],
+)
+def test_only_a_connection_that_was_never_made_is_uncharged(failure, uncharged) -> None:
+    with pytest.raises(ProviderError) as caught:
+        complete(Server(failure))
+    assert caught.value.uncharged is uncharged
+
+
+def test_a_call_past_its_deadline_may_have_been_charged() -> None:
+    with tcp_server(silent) as url, pytest.raises(ProviderTimeoutError) as caught:
+        GeminiProvider(KEY, LITE, base_url=url).complete(
+            MESSAGES, timeout_seconds=0.3, max_output_tokens=5
+        )
+    assert caught.value.uncharged is False
+
+
+def test_a_refused_connection_is_uncharged() -> None:
+    with socket.create_server(("127.0.0.1", 0)) as closed:
+        port = closed.getsockname()[1]
+    with pytest.raises(ProviderError) as caught:
+        GeminiProvider(KEY, LITE, base_url=f"http://127.0.0.1:{port}").complete(
+            MESSAGES, timeout_seconds=8, max_output_tokens=5
+        )
+    assert caught.value.uncharged is True
 
 
 def test_redirects_are_not_followed() -> None:
@@ -285,6 +323,7 @@ def test_bad_answers_are_errors_that_carry_nothing(body, error, caplog) -> None:
     with pytest.raises(ProviderError) as caught:
         complete(Server(body))
     assert type(caught.value) is error
+    assert caught.value.uncharged is isinstance(body, httpx.ConnectError)
     assert caught.value.__cause__ is None and caught.value.__context__ is None
     assert "SECRET" not in str(caught.value.__dict__) + caplog.text
 
@@ -412,8 +451,9 @@ def test_the_number_of_workers_is_limited(monkeypatch) -> None:
     server = Server()
     for _ in range(16):
         gemini._workers.acquire()
-    with pytest.raises(ProviderError):
+    with pytest.raises(ProviderError) as caught:
         complete(server)
+    assert caught.value.uncharged is True
     assert server.requests == []
     gemini._workers.release(16)
     assert complete(server).text

@@ -1,7 +1,7 @@
 # Project Status — Agently
 
-**Current milestone:** Phase 2 built; its exit gate is met with the mock provider only (see Phase 2 exit gate)
-**Next smallest task:** finish Slice 3.1: the owner's `/code-review ultra` of branch `slice-3.1`, fix its findings, merge, push, then switch the local `.env` to Gemini
+**Current milestone:** Phase 3 started: Slice 3.1 (Gemini adapter) is done
+**Next smallest task:** Slice 3.2 — Conversation and message storage (not started, waiting for the owner)
 
 ## Must fix before any deployment
 
@@ -54,18 +54,18 @@ Known gaps to fix or accept:
 
 ## Phase 2 exit gate
 
-Checked 2026-11-25, after Slice 2.4. **Both ROADMAP gates pass locally, but drafts are proven with the mock provider only.** There is no CI yet, so nothing re-runs these automatically. The numbers are browser checks.
+Checked 2026-11-25, after Slice 2.4. **Both ROADMAP gates pass locally, but drafts were proven with the mock provider only until Slice 3.1.** There is no CI yet, so nothing re-runs these automatically. The numbers are browser checks.
 
 | Gate (`docs/ROADMAP.md`) | Result | Proof |
 |---|---|---|
 | Agents created, edited, paused | PASS | `backend/tests/test_agents_api.py`: `test_members_and_owners_can_manage_agents`, `test_only_the_allowed_status_changes_happen`, `test_outdated_edits_are_refused_even_with_identical_text`; `test_agent_concurrency.py`; `frontend/src/features/agents/agents.test.tsx`; `docs/manual-checks/agents-browser-check.js` (116) |
-| Drafts schema-validated | PASS with the mock; real provider BLOCKED | `backend/tests/test_agent_builder.py`: `test_a_draft_has_exactly_the_four_text_fields`, `test_bad_output_is_rejected_whole`, `test_output_cannot_set_other_fields`, `test_text_a_reviewer_cannot_see_is_rejected`; `frontend/src/features/agents/describe.test.tsx`; `docs/manual-checks/builder-browser-check.js` (42) |
+| Drafts schema-validated | PASS; one real Gemini draft on 2026-11-25 | `backend/tests/test_agent_builder.py`: `test_a_draft_has_exactly_the_four_text_fields`, `test_bad_output_is_rejected_whole`, `test_output_cannot_set_other_fields`, `test_text_a_reviewer_cannot_see_is_rejected`; `frontend/src/features/agents/describe.test.tsx`; `docs/manual-checks/builder-browser-check.js` (42) |
 
 The build guide words the gate further (Slice 2.4):
 
 | Gate (`AGENT_BUILD_GUIDE.md`) | Result | Proof |
 |---|---|---|
-| Create by prompt | PASS with the mock; real provider BLOCKED | `test_members_generate_a_sample_draft_and_nothing_is_saved`; `builder-browser-check.js` |
+| Create by prompt | PASS; one real Gemini draft on 2026-11-25 | `test_members_generate_a_sample_draft_and_nothing_is_saved`; `builder-browser-check.js` |
 | Create manually, edit, pause | PASS | as above |
 | See it in your own workspace only | PASS | `backend/tests/test_tenant_isolation.py`, including `test_one_object_does_not_open_what_belongs_to_its_sibling`; isolation parts of `agents-browser-check.js` and `versions-browser-check.js` (59) |
 | Generated configuration grants no permissions | PASS for what the server accepts, whatever a model returns | `test_output_cannot_set_other_fields`, `test_generation_has_no_way_to_write_agents` (weak, see Slice 2.3) |
@@ -405,7 +405,7 @@ The build guide words the gate further (Slice 2.4):
 - **Commit / push:** `feat(agents)` commit of 2026-11-25, pushed to `origin/main`.
 - **Next smallest task:** Slice 3.1 (waiting for the owner)
 
-### Slice 3.1 — Provider contract and Gemini adapter (not finished)
+### Slice 3.1 — Provider contract and Gemini adapter
 - **Date:** 2026-11-25
 - **What changed:** A Gemini adapter chosen with `MODEL_PROVIDER=gemini`, streaming on the provider interface and the mock, a tool-call type that nothing uses, an allowed-model list, a server-wide spending limit (migration `0005`), a hard deadline, silent HTTP libraries, and a notice of who receives the answers that the server enforces. Agents' `model` field stays empty. Tests cannot use a real key or the network.
 - **Plan:** `docs/plans/2026-11-25-1240-feat-gemini-provider-plan.md`. Decision: ADR-0006 (Gemini instead of Anthropic).
@@ -414,13 +414,14 @@ The build guide words the gate further (Slice 2.4):
 
 | Check | Result | Command | Notes |
 |---|---|---|---|
-| Backend tests with real DB | PASS (1151) | `backend: .venv\Scripts\python -m pytest` | No skips |
+| Backend tests with real DB | PASS (1164) | `backend: .venv\Scripts\python -m pytest` | No skips |
 | Backend lint/format, migration on dev DB | PASS | `ruff check .`, `ruff format --check .`, `alembic upgrade head`, `check` | |
 | Frontend | PASS (194) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
 | Browser check, production build, mock | PASS (54) | `docs/manual-checks/builder-browser-check.js` | Other browser checks not re-run |
-| Test sensitivity, backend | 55 of 55 caught | broke one guard at a time | 52 at first; the three survivors were missing tests, added. Frontend guards not mutated |
+| Test sensitivity, backend | 70 of 70 caught | broke one guard at a time | 67 at first; the three survivors were missing tests, added. 15 of them cover the review fixes and refusal logging. Frontend guards not mutated |
 | Real provider | PASS (draft and stream) | `python -m scripts.gemini_check --send` | 2026-11-25, three calls, `gemini-3.5-flash-lite`, free tier. Draft: valid, no fence, 409 tokens in, 131 out, 2.6 s. The first stream prompt (counting to thirty) got `provider_refused`, cause not recorded; refusal reasons from a fixed list are now logged, and with a new prompt the stream passed: 6 pieces, 29 in, 102 out, 1.6 s |
 
-- **Review:** owner-run ultrareview of `a715c17`: one normal finding, two nits. Fixed: answers were lost when drafts were switched off while the form was open; the Gemini provider was rebuilt on every request. OPEN, owner's decision: failed calls keep their reservation even when Google was never called or does not charge. The fixes were not reviewed again.
+- **Review:** owner-run ultrareview of `a715c17`: one normal finding, two nits. Fixed: answers were lost when drafts were switched off while the form was open; the Gemini provider was rebuilt on every request. Also fixed, by the owner's decision of 2026-11-26: calls never sent, or refused with 401 to 404 or 429, give their reservation back (the review showed that they could block drafts for a day). That those statuses are free is our inference. The fixes were not reviewed again.
 - **Known limitations:** the spending limit rests on Google's token counts and our price list; the tier is declared, not detected; `provider_spend` is never cleaned up; opening a database connection for a reservation is not covered by the provider deadline.
-- **Commit / push:** committed on the local branch `slice-3.1` for review. Not merged, not pushed. The local `.env` stays on the mock until it is.
+- **Commit / push:** branch `slice-3.1` merged into `main` and pushed on 2026-11-26. The local `.env` is switched to Gemini after the push.
+- **Next smallest task:** Slice 3.2 — Conversation and message storage (not started, waiting for the owner)

@@ -68,7 +68,7 @@ All errors use `{"error": {"code": "<stable_code>", "message": "<safe text>", "d
 `app/modules/providers` defines the only way to call a model: a list of system, user and assistant messages, a timeout and a maximum of output tokens go in; text and token counts come out. A stream gives the text in pieces and ends with the same result; closing it cancels. Tool calls have a type, but nothing sends tools. Configuration chooses the provider, never a request (ADR-0006).
 
 - **Gemini** (`gemini.py`): a worker thread does the network work and the caller waits with a deadline, so name lookups, slow connections and trickles of bytes cannot pass it. At most 16 workers; a stuck one keeps its place. No retries, redirects or proxies. The key is only in the `x-goog-api-key` header.
-- **Spending** (`spending.py`): wraps every real provider. The worst case is reserved in `provider_spend` before a call, one reservation at a time, and corrected after success. Everything else keeps it. A warning is logged from 80% of either limit.
+- **Spending** (`spending.py`): wraps every real provider. The worst case is reserved in `provider_spend` before a call, one reservation at a time, and corrected after success. Calls never sent, or refused with 401 to 404 or 429, give it back. Everything else keeps it. A warning is logged from 80% of either limit.
 - **Logging** (`app/core/logs.py`): the HTTP libraries are silent at every `LOG_LEVEL`. Settings errors never repeat values.
 - **Tests** switch the provider and key off before the app is imported and may connect to this computer only.
 

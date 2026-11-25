@@ -165,10 +165,52 @@ def test_the_reservation_is_committed_before_the_call(metered, sessions, fake) -
     ],
 )
 @pytest.mark.parametrize("streamed", [False, True])
-def test_every_failure_keeps_its_reservation(metered, sessions, fake, failure, streamed) -> None:
+def test_other_failures_keep_their_reservation(metered, sessions, fake, failure, streamed) -> None:
     fake.result = failure
     with pytest.raises(type(failure)):
         list(stream(metered)) if streamed else run(metered)
+    assert costs(sessions) == [RESERVED]
+
+
+@db
+@pytest.mark.parametrize("streamed", [False, True])
+def test_an_uncharged_failure_gives_its_reservation_back(metered, sessions, fake, streamed) -> None:
+    fake.result = ProviderRateLimitError(uncharged=True)
+    with pytest.raises(ProviderRateLimitError):
+        list(stream(metered)) if streamed else run(metered)
+    assert costs(sessions) == [0] and len(fake.calls) >= 1
+
+
+@db
+def test_uncharged_failures_cannot_use_up_the_day(metered, sessions, fake, configure) -> None:
+    configure(provider_spend_limit_daily="0.02")  # one reservation fits
+    fake.result = ProviderError(uncharged=True)
+    for _ in range(5):
+        with pytest.raises(ProviderError) as caught:
+            run(metered)
+        assert type(caught.value) is ProviderError
+    fake.result = ProviderError()
+    with pytest.raises(ProviderError):
+        run(metered)
+    with pytest.raises(ProviderBudgetError):
+        run(metered)
+
+
+@db
+def test_a_reservation_that_cannot_be_given_back_stays(fake, sessions) -> None:
+    fake.result = ProviderError(uncharged=True)
+    factories = iter([sessions, broken_sessions])
+    with pytest.raises(ProviderError):
+        run(MeteredProvider(fake, LITE, lambda: next(factories)()))
+    assert costs(sessions) == [RESERVED]
+
+
+@db
+def test_a_reader_cannot_get_its_reservation_back(metered, sessions) -> None:
+    reading = stream(metered)
+    next(reading)
+    with pytest.raises(ProviderError):
+        reading.throw(ProviderError(uncharged=True))
     assert costs(sessions) == [RESERVED]
 
 
@@ -315,6 +357,7 @@ def test_time_spent_reserving_comes_off_the_deadline(fake, sessions) -> None:
     with pytest.raises(ProviderTimeoutError):
         run(provider, timeout=0.000001)
     assert len(fake.calls) == 1
+    assert costs(sessions) == [0, REAL]  # never sent, so given back
 
 
 @db

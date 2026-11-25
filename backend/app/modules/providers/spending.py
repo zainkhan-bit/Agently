@@ -1,7 +1,8 @@
 """The server-wide spending limit. Wraps a real provider, so nothing can call it without paying.
 
-The worst case is reserved before a call and corrected after a successful one. Every other outcome
-keeps the reservation, because the provider may have charged for it.
+The worst case is reserved before a call and corrected after a successful one. It is given back
+when the call was never sent, or refused before any work (``ProviderError.uncharged``). Every other
+outcome keeps it, because the provider may have charged for it.
 """
 
 import logging
@@ -57,9 +58,14 @@ class MeteredProvider:
         self, messages: Sequence[Message], *, timeout_seconds: float, max_output_tokens: int
     ) -> Completion:
         reservation, left = self._pay(messages, timeout_seconds, max_output_tokens)
-        completion = self._inner.complete(
-            messages, timeout_seconds=left, max_output_tokens=max_output_tokens
-        )
+        try:
+            completion = self._inner.complete(
+                messages, timeout_seconds=left, max_output_tokens=max_output_tokens
+            )
+        except ProviderError as error:
+            if error.uncharged:
+                self._correct(reservation, cost_nano_usd=0)
+            raise
         self._settle(reservation, completion)
         return completion
 
@@ -71,7 +77,16 @@ class MeteredProvider:
             messages, timeout_seconds=left, max_output_tokens=max_output_tokens
         )
         try:
-            for item in inner:
+            while True:
+                # Not around the yield: an error thrown in by the reader gives nothing back.
+                try:
+                    item = next(inner)
+                except StopIteration:
+                    return
+                except ProviderError as error:
+                    if error.uncharged:
+                        self._correct(reservation, cost_nano_usd=0)
+                    raise
                 if not isinstance(item, TextPiece):
                     self._settle(reservation, item)
                 yield item
@@ -95,23 +110,25 @@ class MeteredProvider:
             raise ProviderError()
         left = timeout_seconds - (time.monotonic() - started)
         if left <= 0:
+            self._correct(reservation, cost_nano_usd=0)
             raise ProviderTimeoutError()
         return reservation, left
 
     def _settle(self, reservation: uuid.UUID, completion: Completion) -> None:
-        """The answer is already paid for: if this fails, it is kept and so is the reservation."""
+        self._correct(
+            reservation,
+            cost_nano_usd=self._spec.cost(completion.input_tokens, completion.output_tokens),
+            input_tokens=completion.input_tokens,
+            output_tokens=completion.output_tokens,
+        )
+
+    def _correct(self, reservation: uuid.UUID, **values: int) -> None:
+        """If this fails, the reservation stays. An answer is already paid for, so it is kept."""
         try:
-            cost = self._spec.cost(completion.input_tokens, completion.output_tokens)
             with self._new_session() as session:
                 limit_write_time(session)
                 session.execute(
-                    update(ProviderSpend)
-                    .where(ProviderSpend.id == reservation)
-                    .values(
-                        cost_nano_usd=cost,
-                        input_tokens=completion.input_tokens,
-                        output_tokens=completion.output_tokens,
-                    )
+                    update(ProviderSpend).where(ProviderSpend.id == reservation).values(**values)
                 )
                 session.commit()
         except Exception as error:  # noqa: BLE001

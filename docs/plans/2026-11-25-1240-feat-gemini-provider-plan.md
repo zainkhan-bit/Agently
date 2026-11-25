@@ -38,7 +38,7 @@ A real key brings risks the mock never had: cost, private text leaving the serve
 - **Free tier for development; production refuses it.** Governs R12, R13. (session-settled: user-directed — chosen over paid or unknown: on free, Google may use and review what people type.)
 - **Dollar budget, reserved first and corrected after.** Governs R7 to R10. (session-settled: user-directed — chosen over a daily limit only or a call count: $1 a day and $10 a month limit money, not calls.)
 - **All of the guide's items; the agent `model` field stays empty.** Governs R3 to R5. (session-settled: user-directed — chosen over per-agent models or deferring tool calls: chat is the first thing that would use a choice.)
-- **Failed calls keep their reservation.** Governs R9. (session-settled: user-approved — chosen over refunds: Google may have charged for them.)
+- **Failed calls keep their reservation, except those certain or very likely to be free.** Governs R9. (session-settled: user-directed — chosen over refunding none: the review showed that free failures could block drafts for a day.)
 - **A notice without a checkbox.** Governs R12. (session-settled: user-approved — chosen over consent: telling people where they type was the agreed item.)
 - **The key travels only in the `x-goog-api-key` header.** Governs R11. (session-settled: user-directed — chosen over `?key=`: URLs reach proxy logs and error messages.)
 - **`gemini-3.5-flash-lite`, or the cheapest other allowed model if the key cannot use it.** Governs R5. (session-settled: user-directed — chosen over `gemini-3.8-flash` as default: cheaper and faster.)
@@ -58,7 +58,7 @@ A real key brings risks the mock never had: cost, private text leaving the serve
 
 - R7. All real calls share two configurable limits: $1 per 24 hours and $10 per 30 days, rolling.
 - R8. The worst-case cost is reserved in the database before a call. If it does not fit a limit, or cannot be recorded, no call is made. Parallel calls cannot pass the limit together.
-- R9. A successful call is corrected to its real cost. Every other outcome keeps the reservation.
+- R9. A successful call is corrected to its real cost. A call that was never sent, or that Google refused with 401, 402, 403, 404 or 429, gives its reservation back. Every other outcome keeps it.
 - R10. A warning without private text is logged whenever spending is at or above 80% of either limit. The mock costs nothing.
 
 **Privacy**

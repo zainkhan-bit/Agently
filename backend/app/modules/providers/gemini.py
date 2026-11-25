@@ -10,6 +10,7 @@ import queue
 import threading
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -39,6 +40,8 @@ MAX_ERROR_BYTES = 64_000
 _workers = threading.BoundedSemaphore(16)
 
 _REFUSALS = {"SAFETY", "RECITATION", "LANGUAGE", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}
+# Refused before any work. Our inference from what the statuses mean, not a Google promise.
+_UNCHARGED = {401, 402, 403, 404, 429}
 _BLOCKS = {"SAFETY", "OTHER", "BLOCKLIST", "PROHIBITED_CONTENT", "IMAGE_SAFETY"}
 
 
@@ -80,10 +83,10 @@ class GeminiProvider:
         deadline = time.monotonic() + timeout_seconds
         url, body = self.request(messages, max_output_tokens)
         if not self._spec.streaming or timeout_seconds <= 0:
-            raise ProviderError()
+            raise ProviderError(uncharged=True)
         if not _workers.acquire(blocking=False):
             logger.warning("gemini call refused (no free worker)")
-            raise ProviderError()
+            raise ProviderError(uncharged=True)
         call = _Call(self._client, timeout_seconds, deadline, url, body)
         try:
             threading.Thread(target=call.run, name="gemini", daemon=True).start()
@@ -100,7 +103,7 @@ class GeminiProvider:
     ) -> tuple[str, dict[str, Any]]:
         """The URL and body. Neither holds the key."""
         if not 0 < max_output_tokens <= self._spec.max_output_tokens:
-            raise ProviderError()
+            raise ProviderError(uncharged=True)
         body: dict[str, Any] = {
             "contents": [
                 {
@@ -133,6 +136,12 @@ class GeminiProvider:
         )
 
 
+@dataclass(frozen=True)
+class _Failure:
+    error: type[ProviderError] = ProviderError
+    uncharged: bool = False
+
+
 class _Call:
     """One request, made on a worker thread. Hands over parsed events, then one error or None."""
 
@@ -147,18 +156,22 @@ class _Call:
 
     def run(self) -> None:
         try:
-            result: type[ProviderError] | None = ProviderError
+            result: _Failure | None = _Failure()
             try:
                 result = self._events()
+            except httpx.ConnectTimeout:
+                result = _Failure(ProviderTimeoutError, uncharged=True)
+            except httpx.ConnectError:
+                result = _Failure(uncharged=True)
             except httpx.TimeoutException:
-                result = ProviderTimeoutError
+                result = _Failure(ProviderTimeoutError)
             except Exception:  # noqa: BLE001, S110 - may hold the key or private text
                 pass
             self._put(result)
         finally:
             _workers.release()
 
-    def _events(self) -> type[ProviderError] | None:
+    def _events(self) -> _Failure | None:
         with (
             self._new_client(self._timeout) as client,
             client.stream("POST", self._url, json=self._body) as response,
@@ -169,9 +182,9 @@ class _Call:
             for chunk in response.iter_raw():
                 received += len(chunk)
                 if self._over():
-                    return ProviderTimeoutError
+                    return _Failure(ProviderTimeoutError)
                 if received > MAX_RESPONSE_BYTES:
-                    return ProviderError
+                    return _Failure()
                 *lines, buffer = (buffer + chunk).split(b"\n")
                 for line in lines:
                     self._event(line)
@@ -182,14 +195,15 @@ class _Call:
         if line.startswith(b"data:"):
             self._put(json.loads(line[5:]))
 
-    def _refused(self, response: httpx.Response) -> type[ProviderError]:
+    def _refused(self, response: httpx.Response) -> _Failure:
         body = b""
         for chunk in response.iter_raw():
             body += chunk
             if len(body) > MAX_ERROR_BYTES or self._over():
                 break
         logger.warning("gemini call failed (http %d)", response.status_code)
-        return _error_for(response.status_code, body)
+        error = _error_for(response.status_code, body)
+        return _Failure(error, uncharged=response.status_code in _UNCHARGED)
 
     def _over(self) -> bool:
         return self.cancelled.is_set() or time.monotonic() >= self.deadline
@@ -209,18 +223,20 @@ def _read(call: _Call) -> Stream:
     finished = False
     while True:
         # Raised outside the except blocks: there, the error would keep private text as context.
-        failure: type[ProviderError] | None = None
+        failure: _Failure | None = None
         event: Any = None
         piece = ""
         try:
             event = call.items.get(timeout=max(0.0, call.deadline - time.monotonic()))
         except queue.Empty:
-            failure = ProviderTimeoutError
+            failure = _Failure(ProviderTimeoutError)
         if failure is None and time.monotonic() >= call.deadline:
-            failure = ProviderTimeoutError  # also when the caller took too long to come back
+            failure = _Failure(
+                ProviderTimeoutError
+            )  # also when the caller took too long to come back
         if failure is None and event is None:
             break
-        if failure is None and isinstance(event, type):
+        if failure is None and isinstance(event, _Failure):
             failure = event
         elif failure is None:
             try:
@@ -228,9 +244,9 @@ def _read(call: _Call) -> Stream:
                 finished = finished or done
                 usage = counts or usage
             except Exception as error:  # noqa: BLE001 - includes any undocumented shape
-                failure = type(error) if type(error) in KNOWN_ERRORS else ProviderError
+                failure = _Failure(type(error) if type(error) in KNOWN_ERRORS else ProviderError)
         if failure is not None:
-            raise failure()
+            raise failure.error(uncharged=failure.uncharged)
         if piece:
             text.append(piece)
             yield TextPiece(piece)
