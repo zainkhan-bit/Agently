@@ -6,7 +6,9 @@ the locked rows. What the request saw when it started is not trusted.
 
 import uuid
 from collections.abc import Sequence
+from dataclasses import dataclass
 
+from pydantic import ValidationError
 from sqlalchemy import Row, delete, func, select
 from sqlalchemy.orm import Session
 
@@ -14,6 +16,9 @@ from app.core.config import get_settings
 from app.core.errors import ConflictError, NotFoundError
 from app.core.text import NAME_MAX
 from app.modules.agents.models import ACTIVE, ARCHIVED, PAUSED, Agent, AgentVersion
+from app.modules.agents.schemas import AgentCreate
+from app.modules.identity.models import User
+from app.modules.workspaces.models import Membership
 from app.modules.workspaces.service import (
     WorkspaceContext,
     lock_for_member_write,
@@ -21,6 +26,7 @@ from app.modules.workspaces.service import (
 )
 
 MAX_VERSIONS = 200
+VERSION_PAGE = 20
 
 # action: (allowed from, result)
 TRANSITIONS = {
@@ -41,7 +47,15 @@ class AgentLimitError(ConflictError):
 
 class VersionLimitError(ConflictError):
     code = "version_limit"
-    message = f"This agent already has {MAX_VERSIONS} saved versions. No more can be saved."
+    message = (
+        f"This agent already has {MAX_VERSIONS} saved versions, so no more can be saved. "
+        "Duplicate the agent to continue with a new history."
+    )
+
+
+class VersionInvalidError(ConflictError):
+    code = "version_invalid"
+    message = "This version no longer meets the rules for agents, so it cannot be restored."
 
 
 class VersionConflictError(ConflictError):
@@ -126,23 +140,27 @@ def update_agent(
     version: int,
     changes: dict[str, str | None],
 ) -> AgentWithVersion:
-    agent = _lock_agent(db, context, agent_id)
-    if agent.status == ARCHIVED:
-        raise AgentArchivedError()
-    if agent.current_version != version:
-        raise VersionConflictError(details={"current_version": agent.current_version})
+    agent = _lock_for_save(db, context, agent_id, version)
     current = _current_version(db, agent)
-    before = _configuration(current)
-    after = before | changes
-    if after == before:
-        db.commit()  # or the locks would last until the response has been sent
-        return agent, current
-    if agent.current_version >= MAX_VERSIONS:
-        raise VersionLimitError()
-    agent.current_version += 1
-    saved = _add_version(db, context, agent, after)
-    db.commit()
-    return agent, saved
+    return _save(db, context, agent, current, _configuration(current) | changes)
+
+
+def roll_back(
+    db: Session,
+    context: WorkspaceContext,
+    agent_id: uuid.UUID,
+    version_id: uuid.UUID,
+    version: int,
+) -> AgentWithVersion:
+    """Save a new version copied from an earlier one. ``version`` is the current one as seen."""
+    agent = _lock_for_save(db, context, agent_id, version)
+    source = db.scalar(
+        select(AgentVersion).where(AgentVersion.id == version_id, AgentVersion.agent_id == agent.id)
+    )
+    if source is None:
+        raise NotFoundError()
+    current = _current_version(db, agent)
+    return _save(db, context, agent, current, _configuration(source), source.number)
 
 
 def duplicate_agent(
@@ -183,6 +201,65 @@ def delete_agent(db: Session, context: WorkspaceContext, agent_id: uuid.UUID) ->
     db.commit()
 
 
+@dataclass(frozen=True)
+class VersionEntry:
+    version: AgentVersion
+    is_current: bool
+    changed: list[str] | None
+    saved_by: str | None
+
+
+def list_versions(
+    db: Session, context: WorkspaceContext, agent_id: uuid.UUID, before: int | None
+) -> tuple[list[VersionEntry], int | None]:
+    """One page, newest first, and where the next one starts."""
+    query = (
+        _versions(context, agent_id)
+        .add_columns(Agent.current_version)
+        .order_by(AgentVersion.number.desc())
+        .limit(VERSION_PAGE + 1)  # the last entry is compared with the one after it
+    )
+    if before is not None:
+        query = query.where(AgentVersion.number < before)
+    rows = db.execute(query).all()
+    if not rows and before is None:
+        raise NotFoundError()  # an agent always has a version: it has just been deleted
+    entries = []
+    for index, (version, saved_by, current) in enumerate(rows[:VERSION_PAGE]):
+        changed = None
+        if index + 1 < len(rows):
+            old, new = _configuration(rows[index + 1][0]), _configuration(version)
+            changed = [field for field in CONFIGURATION if new[field] != old[field]]
+        entries.append(VersionEntry(version, version.number == current, changed, saved_by))
+    return entries, entries[-1].version.number if len(rows) > VERSION_PAGE else None
+
+
+def read_version(
+    db: Session, context: WorkspaceContext, agent_id: uuid.UUID, version_id: uuid.UUID
+) -> tuple[AgentVersion, str | None]:
+    row = db.execute(
+        _versions(context, agent_id).where(AgentVersion.id == version_id)
+    ).one_or_none()
+    if row is None:
+        raise NotFoundError()
+    return row[0], row[1]
+
+
+def _versions(context: WorkspaceContext, agent_id: uuid.UUID):
+    """Versions with the saver's email, which is empty unless they are a member now."""
+    return (
+        select(AgentVersion, User.email)
+        .join(Agent, Agent.id == AgentVersion.agent_id)
+        .outerjoin(
+            Membership,
+            (Membership.user_id == AgentVersion.created_by)
+            & (Membership.workspace_id == Agent.workspace_id),
+        )
+        .outerjoin(User, User.id == Membership.user_id)
+        .where(Agent.id == agent_id, Agent.workspace_id == context.workspace.id)
+    )
+
+
 def _with_version():
     return select(Agent, AgentVersion).join(
         AgentVersion,
@@ -202,6 +279,48 @@ def _lock_agent(db: Session, context: WorkspaceContext, agent_id: uuid.UUID) -> 
     if agent is None:
         raise NotFoundError()
     return agent
+
+
+def _lock_for_save(
+    db: Session, context: WorkspaceContext, agent_id: uuid.UUID, version: int
+) -> Agent:
+    agent = _lock_agent(db, context, agent_id)
+    if agent.status == ARCHIVED:
+        raise AgentArchivedError()
+    if agent.current_version != version:
+        raise VersionConflictError(details={"current_version": agent.current_version})
+    return agent
+
+
+def _save(
+    db: Session,
+    context: WorkspaceContext,
+    agent: Agent,
+    current: AgentVersion,
+    configuration: dict[str, str | None],
+    restored_from: int | None = None,
+) -> AgentWithVersion:
+    """Add a version and commit, unless nothing changes. The agent must be locked."""
+    if configuration == _configuration(current):
+        db.commit()  # or the locks would last until the response has been sent
+        return agent, current
+    if agent.current_version >= MAX_VERSIONS:
+        raise VersionLimitError()
+    if restored_from is not None and not _meets_rules(configuration):
+        raise VersionInvalidError()
+    agent.current_version += 1
+    saved = _add_version(db, context, agent, configuration, restored_from)
+    db.commit()
+    return agent, saved
+
+
+def _meets_rules(configuration: dict[str, str | None]) -> bool:
+    """Old versions may predate a rule. Edits have already been checked by their schema."""
+    try:
+        # Also the same after cleaning up, because the stored text itself is copied.
+        return AgentCreate.model_validate(configuration).model_dump() == configuration
+    except ValidationError:
+        return False
 
 
 def _current_version(db: Session, agent: Agent) -> AgentVersion:
@@ -233,11 +352,16 @@ def _add_agent(
 
 
 def _add_version(
-    db: Session, context: WorkspaceContext, agent: Agent, configuration: dict[str, str | None]
+    db: Session,
+    context: WorkspaceContext,
+    agent: Agent,
+    configuration: dict[str, str | None],
+    restored_from: int | None = None,
 ) -> AgentVersion:
     version = AgentVersion(
         agent_id=agent.id,
         number=agent.current_version,
+        restored_from=restored_from,
         created_by=context.user_id,
         **configuration,
     )

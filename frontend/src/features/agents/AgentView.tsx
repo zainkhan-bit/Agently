@@ -8,11 +8,12 @@ import { ErrorRetry } from "@/components/ErrorRetry";
 import { PageHeading } from "@/components/PageHeading";
 import { WorkspaceMissing } from "@/features/workspaces/WorkspaceMissing";
 import { ApiError, apiFetch, apiPost } from "@/lib/api";
+import { focusContentOnFollow } from "@/lib/focusContent";
 import { usePageRouter } from "@/lib/usePageRouter";
 
 import { AgentMissing } from "./AgentMissing";
 import { changeFailure } from "./failure";
-import { agentPath, agentsPath } from "./paths";
+import { agentPath, agentsPath, versionsPath } from "./paths";
 import { type Agent, type AgentStatus, STATUS_LABEL } from "./types";
 import { useAgent } from "./useAgent";
 
@@ -151,6 +152,16 @@ export function AgentView({ workspaceId, agentId }: { workspaceId: string; agent
         <h2 id="configuration-heading" className="font-semibold">
           Configuration
         </h2>
+        <p>
+          Version {agent.version}.{" "}
+          <Link
+            href={versionsPath(workspaceId, agent.id)}
+            onClick={focusContentOnFollow}
+            className="underline"
+          >
+            Version history
+          </Link>
+        </p>
         <dl className="flex flex-col gap-4">
           {(["purpose", "description", "instructions"] as const).map((field) => (
             <div key={field}>

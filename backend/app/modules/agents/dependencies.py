@@ -7,7 +7,7 @@ from fastapi import Depends
 from sqlalchemy import select
 
 from app.core.errors import NotFoundError, RateLimitError
-from app.modules.agents.models import Agent
+from app.modules.agents.models import Agent, AgentVersion
 from app.modules.identity import throttle
 from app.modules.identity.dependencies import CurrentUser, Db
 from app.modules.workspaces.dependencies import MemberContext, OwnerContext
@@ -25,6 +25,19 @@ def get_agent(agent_id: uuid.UUID, context: MemberContext, db: Db) -> Agent:
 
 
 AgentInWorkspace = Annotated[Agent, Depends(get_agent)]
+
+
+def get_version(version_id: uuid.UUID, agent: AgentInWorkspace, db: Db) -> AgentVersion:
+    """404 unless the version belongs to the agent in the path."""
+    version = db.scalar(
+        select(AgentVersion).where(AgentVersion.id == version_id, AgentVersion.agent_id == agent.id)
+    )
+    if version is None:
+        raise NotFoundError()
+    return version
+
+
+VersionOfAgent = Annotated[AgentVersion, Depends(get_version)]
 
 
 def require_agent_owner(_: AgentInWorkspace, context: OwnerContext) -> WorkspaceContext:
@@ -48,4 +61,8 @@ def count_create(_: MemberContext, user: CurrentUser, db: Db) -> None:
 
 
 def count_agent_write(_: AgentInWorkspace, user: CurrentUser, db: Db) -> None:
+    _count_write(user, db)
+
+
+def count_version_write(_: VersionOfAgent, user: CurrentUser, db: Db) -> None:
     _count_write(user, db)

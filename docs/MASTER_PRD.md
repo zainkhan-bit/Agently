@@ -46,7 +46,7 @@ Each requirement is testable. IDs are referenced from tests and `PROJECT_STATUS.
 - **AGT-1** Create/list/view/edit/duplicate/pause/archive/delete agents. *AC:* each operation except delete works for members; delete is for owners and members get 403 (ADR-0005); cross-workspace attempts return 404.
 - **AGT-2** Validation. *AC:* empty/oversized names and instructions rejected with field-level errors.
 - **AGT-3** Paused/archived agents cannot run. *AC:* chat returns a clear "agent paused" error.
-- **AGT-4** Versioned configuration. *AC:* every save that changes something produces a version, up to 200 per agent; each execution records the version used; stale updates are rejected (optimistic concurrency).
+- **AGT-4** Versioned configuration. *AC:* every save that changes something produces a version, up to 200 per agent; each execution records the version used; stale updates are rejected (optimistic concurrency). Members can view every version and roll back, which saves a copy as a new version and never changes history.
 - **AGT-5** Prompt-to-agent builder. *AC:* produces a schema-validated *draft*; malformed model output is handled; generated drafts cannot enable tools or permissions; nothing saves without explicit user action.
 
 ### Models (MDL)

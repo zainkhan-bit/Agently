@@ -1,7 +1,7 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 2 — Agent creation and configuration (Phase 1 exit gate met)
-**Next smallest task:** Slice 2.4 — Agent configuration and versions (not started, waiting for the owner)
+**Next smallest task:** Slice 3.1 — Provider contract and configuration (not started, waiting for the owner)
 
 ## Must fix before any deployment
 
@@ -335,3 +335,39 @@ Known gaps to fix or accept:
   - `backend/.env` was left unchanged: add `MODEL_PROVIDER=mock` there to use the builder locally.
 - **Commit / push:** `feat(agents)` commit of 2026-11-24, pushed to `origin/main`.
 - **Next smallest task:** Slice 2.4 — Agent configuration and versions (not started, waiting for the owner)
+
+### Local fix — dev server port
+- **Date:** 2026-11-24
+- **What changed:** `npm run dev` uses port 3000 or stops. A leftover `next start` from the Slice 2.3 checks held 3000, so Next.js moved to 3001; pages loaded, because cookies ignore ports, but every write came from `http://localhost:3001` and was refused. The Origin check is unchanged.
+- **Checked:** Edge, headless: 403 on 3001 and a draft on 3000; then a draft on the restarted dev server on 3000. `/verify` green.
+- **Commit / push:** `063ee62`, pushed to `origin/main`.
+
+### Slice 2.4 — Agent configuration and versions
+- **Date:** 2026-11-24, finished 2026-11-25
+- **What changed:** Version history (20 per page, with the names of the changed fields), a read-only view of each version, and rollback. Rollback saves a copy as a new version and records its source (migration `0004`); no version is ever changed. It follows the rules of editing: 409 when stale, 200 versions, not while archived, write limit, nothing saved when nothing changes; a version that breaks today's rules is refused. Savers are shown by email only while they are members, otherwise "Former member". Versions have unique ids in URLs. The limit message now names duplicating as the way on.
+- **Isolation:** version routes joined the matrix automatically. New for every route naming an object inside another: both ids are attacked with a sibling agent of the same workspace, in both directions, with a positive control and a planted unguarded route.
+- **Plan:** `docs/plans/2026-11-24-1521-feat-agent-versions-plan.md`. Assumptions made while the owner was away are listed there.
+- **Files/modules affected:** `backend/app/modules/agents/`, `backend/migrations/versions/0004_agent_version_source.py`, `backend/tests/`, `frontend/src/features/agents/`, `frontend/src/lib/focusContent.ts`, `frontend/src/app/(app)/workspaces/[id]/agents/[agentId]/versions/`, `docs/`, `.gstack/pregate.json`, `README.md`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (995) | `backend: .venv\Scripts\python -m pytest` | No skips, final code |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Migration on dev DB | PASS | `alembic upgrade head`, `check`, `downgrade -1`, `upgrade head`, `check` | |
+| Frontend | PASS (181) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | |
+| Browser checks, production build | PASS (59 + 116 + 42 + 99 + 22 + 15) | `docs/manual-checks/` | versions, agents, builder, dashboard, auth, workspace. The test backend started before the last review fix to the rollback rule check, which only backend tests cover |
+| Test sensitivity | 44 of 46 caught | broke one guard at a time | Backend 33 of 35, frontend 11 of 11. Survivors: the agent row lock (the workspace lock already makes writes take turns) and the query limit of a page (the result is cut to 20 anyway). One survivor was a missing test, added. The run was interrupted by low memory and finished later |
+| Backend tests without DB | NOT RUN | | |
+
+- **Also fixed:** `test_production_starts_when_configured` read the developer's `backend/.env` and failed once it named the mock. The test now sets the value; the guard is unchanged.
+- **Review:** one independent Claude reviewer (security and concurrency), by reading only, no external model. No P0/P1. Fixed: a busy rollback did not offer the latest state (P2); the matrix had no planted unguarded route; its control accepted only 200; rollback could restore text that today's rules would clean up (P3s). Changes after the review were not reviewed again.
+- **Known limitations:**
+  - P3, recorded: the matrix attacks ids in paths only. A version id in a query string or body would need its own test; no route has one.
+  - P3, recorded: if an agent is edited, archived and restored by others while a rollback is refused, the page moves to the newer version number without asking for a reload. It shows the number.
+  - Reading a page of history loads the instructions of up to 21 versions on the server; they are not sent.
+  - The rollback screen for members is covered by component and API tests only: nobody can be invited yet.
+  - Guide 2.4 "execution metadata can identify the version" is BLOCKED until executions exist (Phase 3). Versions have permanent ids and numbers for it.
+  - No side-by-side diff, labels or deletion of versions.
+- **Commit / push:** `feat(agents)` commit of 2026-11-25, pushed to `origin/main`.
+- **Next smallest task:** Phase 2 exit report, then Slice 3.1 (waiting for the owner)

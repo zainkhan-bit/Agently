@@ -87,6 +87,38 @@ class AgentOut(AgentSummary):
     instructions: str
 
 
+class Rollback(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: Annotated[int, Field(strict=True, ge=1)]  # the current version the person saw
+
+
+class VersionBase(BaseModel):
+    id: uuid.UUID
+    number: int
+    name: str
+    restored_from: int | None
+    saved_by: str | None  # email, only while they are a member of the workspace
+    created_at: UtcDatetime
+
+
+class VersionSummary(VersionBase):
+    is_current: bool
+    changed: list[str] | None  # compared with the version before; None for the first
+
+
+class VersionOut(VersionBase):
+    purpose: str | None
+    description: str | None
+    instructions: str
+    model: str | None
+
+
+class VersionPage(BaseModel):
+    items: list[VersionSummary]
+    next_before: int | None  # pass as `before` for the next page; None on the last
+
+
 class AgentPage(BaseModel):
     items: list[AgentSummary]
     total: int

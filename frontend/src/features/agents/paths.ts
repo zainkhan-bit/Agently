@@ -5,6 +5,12 @@ export const agentsPath = (workspaceId: string) =>
 export const agentPath = (workspaceId: string, agentId: string) =>
   `${agentsPath(workspaceId)}/${encodeURIComponent(agentId)}`;
 
+export const versionsPath = (workspaceId: string, agentId: string) =>
+  `${agentPath(workspaceId, agentId)}/versions`;
+
+export const versionPath = (workspaceId: string, agentId: string, versionId: string) =>
+  `${versionsPath(workspaceId, agentId)}/${encodeURIComponent(versionId)}`;
+
 export const describePath = (workspaceId: string) => `${agentsPath(workspaceId)}/new/describe`;
 
 /** On the server only. */

@@ -18,12 +18,12 @@ PostgreSQL 16+ (developed on 18), SQLAlchemy 2.x models, Alembic migrations. Mod
 | `memberships` | A user's role in a workspace | One per `(user_id, workspace_id)`. `role` is `owner` or `member` (check constraint, so adding a role later is a constraint swap, not an enum migration). A user can belong to many workspaces. |
 | `sessions` | Server-side login sessions (ADR-0003) | Stores only `token_hash`, unique and indexed; never the raw token. `expires_at` required, `revoked_at` nullable (set by logout). |
 | `agents` | Agents of a workspace | `status` is `active`, `paused` or `archived` (check constraint). `created_by` is nullable. |
-| `agent_versions` | Saved configurations | Unique per `(agent_id, number)`. `model` is always empty until Slice 3.1. `created_by` is nullable. |
+| `agent_versions` | Saved configurations | Unique per `(agent_id, number)`. `model` is always empty until Slice 3.1. `created_by` is nullable. `restored_from` is the number of the version a rollback copied: an earlier version of the same agent (composite foreign key and check), empty for every other save. |
 | `auth_throttle_events` | Counted login, signup and agent-write attempts | One row per attempt and limit. `key_hash` is a SHA-256 of the scope plus normalised email and/or IP, or the user id for agent writes; no plaintext email. `created_at` is set by the application. Rows older than the longest throttle window are deleted whenever a new attempt is recorded, so the table stays bounded. Not linked to `users`: unknown emails are counted too. |
 
 ## Agents
 
-An agent's configuration lives only in its versions; `agents.current_version` says which one is in use. A version is never changed after it is written. An agent has at most 200 versions (then changing edits are refused; nothing is pruned), and a workspace has at most 50 agents, archived included (`AGENT_LIMIT_PER_WORKSPACE`).
+An agent's configuration lives only in its versions; `agents.current_version` says which one is in use. A version is never changed after it is written. A rollback adds a version copied from an older one. An agent has at most 200 versions (then changing edits are refused; nothing is pruned), and a workspace has at most 50 agents, archived included (`AGENT_LIMIT_PER_WORKSPACE`).
 
 **Lock order for every agent write:** workspace row (`FOR NO KEY UPDATE`), the caller's membership (`FOR SHARE`), then the agent (`FOR UPDATE`). Agent writes therefore take turns within a workspace. Deleting an agent locks like the owner actions below and then deletes. The write throttle commits, so it always runs before the first lock.
 

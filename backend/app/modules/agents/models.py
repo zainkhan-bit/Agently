@@ -2,7 +2,16 @@
 
 import uuid
 
-from sqlalchemy import CheckConstraint, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    ForeignKey,
+    ForeignKeyConstraint,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -41,12 +50,21 @@ class AgentVersion(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     __table_args__ = (
         UniqueConstraint("agent_id", "number"),
         CheckConstraint("number >= 1", name="number_positive"),
+        # The source of a rollback is an earlier version of the same agent.
+        ForeignKeyConstraint(
+            ["agent_id", "restored_from"],
+            ["agent_versions.agent_id", "agent_versions.number"],
+            name="fk_agent_versions_agent_id_restored_from_agent_versions",
+        ),
+        CheckConstraint("restored_from < number", name="restored_from_earlier"),
     )
 
     agent_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("agents.id", ondelete="CASCADE"), nullable=False
     )
     number: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Set by a rollback only: the number of the version it copied.
+    restored_from: Mapped[int | None] = mapped_column(Integer)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     purpose: Mapped[str | None] = mapped_column(String(500))
     description: Mapped[str | None] = mapped_column(String(1000))

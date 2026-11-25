@@ -106,7 +106,12 @@ def test_env_example_is_for_development() -> None:
 
 
 def test_production_starts_when_configured(env) -> None:
-    env(ENVIRONMENT="production", TRUSTED_PROXY_HOPS="1", SESSION_COOKIE_SECURE="true")
+    env(
+        ENVIRONMENT="production",
+        TRUSTED_PROXY_HOPS="1",
+        SESSION_COOKIE_SECURE="true",
+        MODEL_PROVIDER="",  # a developer's backend/.env may name the mock
+    )
     create_app()
 
 

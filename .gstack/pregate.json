@@ -4,6 +4,7 @@
     "backend/**": [
       "backend/tests/test_agent_builder.py",
       "backend/tests/test_agent_concurrency.py",
+      "backend/tests/test_agent_versions.py",
       "backend/tests/test_agents_api.py",
       "backend/tests/test_auth_api.py",
       "backend/tests/test_auth_logging.py",
@@ -33,6 +34,7 @@
     "frontend/**": [
       "frontend/src/features/agents/agents.test.tsx",
       "frontend/src/features/agents/describe.test.tsx",
+      "frontend/src/features/agents/versions.test.tsx",
       "frontend/src/features/auth/AccountView.test.tsx",
       "frontend/src/features/auth/AuthForm.test.tsx",
       "frontend/src/features/shell/AppShell.test.tsx",

@@ -124,6 +124,29 @@ def test_agent_version_numbers_are_unique_and_positive(db_session: Session) -> N
             db_session.add(make_version(agent, user, 0))
 
 
+def test_a_version_can_only_come_from_an_earlier_one_of_its_own_agent(
+    db_session: Session,
+) -> None:
+    user, workspace = make_user(db_session), make_workspace(db_session)
+    agent, other = (make_agent(db_session, workspace, user) for _ in range(2))
+    db_session.add(make_version(other, user, 2))
+    db_session.flush()
+
+    def add(number: int, source: int) -> None:
+        version = make_version(agent, user, number)
+        version.restored_from = source
+        with db_session.begin_nested():
+            db_session.add(version)
+
+    with pytest.raises(IntegrityError, match="ck_agent_versions_restored_from_earlier"):
+        add(2, 2)
+    with pytest.raises(IntegrityError, match="fk_agent_versions_agent_id_restored_from"):
+        add(4, 2)  # the other agent has a version 2, this one does not
+    add(2, 1)
+    db_session.execute(delete(Agent).where(Agent.id == agent.id))
+    assert count(db_session, AgentVersion) == 2
+
+
 @pytest.mark.parametrize("parent", ["agent", "workspace"])
 def test_deleting_an_agent_or_its_workspace_removes_versions(
     db_session: Session, parent: str

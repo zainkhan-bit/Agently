@@ -45,6 +45,12 @@ def edit(client, one, version, name):
     return lambda: client.patch(one, json={"version": version, "name": name})
 
 
+def roll_back(client, one, version=2):
+    """To version 1. Reading its id takes no lock, so it never waits."""
+    first = client.get(f"{one}/versions", params={"before": 2}).json()["items"][0]["id"]
+    return client.post(f"{one}/versions/{first}/rollback", json={"version": version})
+
+
 def versions(factory, agent) -> list[int]:
     with factory() as session:
         return list(
@@ -119,6 +125,7 @@ WRITES = {
     "archive": lambda client, url, agent: client.post(f"{url}/{agent}/archive"),
     "resume": lambda client, url, agent: client.post(f"{url}/{agent}/resume"),
     "restore": lambda client, url, agent: client.post(f"{url}/{agent}/restore"),
+    "rollback": lambda client, url, agent: roll_back(client, f"{url}/{agent}"),
     "delete": lambda client, url, agent: client.delete(f"{url}/{agent}"),
 }
 
@@ -126,6 +133,8 @@ WRITES = {
 def prepare(client, url, agent, write) -> None:
     """Put the agent in the status the write needs."""
     needs = {"resume": "pause", "restore": "archive"}
+    if write == "rollback":
+        assert edit(client, f"{url}/{agent}", 1, "Second")().status_code == 200
     if write in needs:
         assert client.post(f"{url}/{agent}/{needs[write]}").status_code == 200
 
@@ -266,6 +275,86 @@ def test_an_edit_that_changes_nothing_releases_its_locks(factory, shared) -> Non
     with factory() as session, factory() as observer:
         context = WorkspaceContext(session.get(Workspace, workspace_id), uuid.UUID(ids[0]), "owner")
         service.update_agent(session, context, uuid.UUID(agent), 1, {"name": "Helper"})
+        observer.execute(
+            select(Workspace.id)
+            .where(Workspace.id == workspace_id)
+            .with_for_update(key_share=True, nowait=True)
+        )
+
+
+def test_two_rollbacks_of_one_version_save_exactly_once(factory, shared) -> None:
+    clients, _, workspace_id, url, agent = shared
+    one = f"{url}/{agent}"
+    prepare(clients[0], url, agent, "rollback")
+    responses = race(
+        factory,
+        lock_workspace(workspace_id),
+        [lambda: roll_back(clients[0], one), lambda: roll_back(clients[1], one)],
+    )
+    assert sorted(r.status_code for r in responses) == [200, 409]
+    assert versions(factory, agent) == [1, 2, 3]
+
+
+@pytest.mark.parametrize("rollback_first", [True, False])
+def test_a_rollback_and_an_edit_of_one_version_save_exactly_once(
+    factory, shared, rollback_first
+) -> None:
+    clients, _, workspace_id, url, agent = shared
+    one = f"{url}/{agent}"
+    prepare(clients[0], url, agent, "rollback")
+    requests = [lambda: roll_back(clients[0], one), edit(clients[1], one, 2, "Edited")]
+    if not rollback_first:
+        requests.reverse()
+    responses = race(factory, lock_workspace(workspace_id), requests)
+    assert [r.status_code for r in responses] == [200, 409]
+    assert responses[1].json()["error"]["code"] == "version_conflict"
+    assert versions(factory, agent) == [1, 2, 3]
+
+
+def test_two_rollbacks_at_the_version_cap_save_exactly_once(factory, shared, monkeypatch) -> None:
+    clients, _, workspace_id, url, agent = shared
+    one = f"{url}/{agent}"
+    prepare(clients[0], url, agent, "rollback")
+    monkeypatch.setattr(service, "MAX_VERSIONS", 3)
+    second = clients[0].get(f"{one}/versions").json()["items"][0]["id"]
+    responses = race(
+        factory,
+        lock_workspace(workspace_id),
+        [
+            lambda: roll_back(clients[0], one),
+            # States the version that the first is about to save.
+            lambda: clients[1].post(f"{one}/versions/{second}/rollback", json={"version": 3}),
+        ],
+    )
+    assert [r.status_code for r in responses] == [200, 409]
+    assert responses[1].json()["error"]["code"] == "version_limit"
+    assert versions(factory, agent) == [1, 2, 3]
+
+
+def test_rollback_queued_behind_an_archive_is_refused(factory, shared) -> None:
+    clients, _, workspace_id, url, agent = shared
+    prepare(clients[0], url, agent, "rollback")
+    responses = race(
+        factory,
+        lock_workspace(workspace_id),
+        [
+            lambda: WRITES["archive"](clients[0], url, agent),
+            lambda: WRITES["rollback"](clients[1], url, agent),
+        ],
+    )
+    assert [r.status_code for r in responses] == [200, 409]
+    assert responses[1].json()["error"]["code"] == "agent_archived"
+    assert versions(factory, agent) == [1, 2]
+
+
+def test_a_rollback_that_changes_nothing_releases_its_locks(factory, shared) -> None:
+    _, ids, workspace_id, _, agent = shared
+    with factory() as session, factory() as observer:
+        context = WorkspaceContext(session.get(Workspace, workspace_id), uuid.UUID(ids[0]), "owner")
+        version = session.scalar(
+            select(AgentVersion.id).where(AgentVersion.agent_id == uuid.UUID(agent))
+        )
+        service.roll_back(session, context, uuid.UUID(agent), version, 1)
         observer.execute(
             select(Workspace.id)
             .where(Workspace.id == workspace_id)
