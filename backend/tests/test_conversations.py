@@ -191,6 +191,12 @@ def test_the_database_refuses_inconsistent_messages(c, db_session, values, const
         db_session.flush()
 
 
+def test_the_database_refuses_a_negative_message_count(c, db_session) -> None:
+    refuse = update(Conversation).where(Conversation.id == c.chat_id).values(message_count=-1)
+    with pytest.raises(IntegrityError, match="ck_conversations_message_count_not_negative"):
+        db_session.execute(refuse)
+
+
 def test_a_version_of_another_agent_is_refused(c, db_session) -> None:
     """Version 2 exists, but only of the sibling."""
     other = f"{c.url}/{create(c.owner, c.url)['id']}"

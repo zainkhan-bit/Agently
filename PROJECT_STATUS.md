@@ -1,7 +1,7 @@
 # Project Status — Agently
 
-**Current milestone:** Phase 3: Slices 3.1 to 3.3 are done; 3.3 is proven with the mock only
-**Next smallest task:** the owner reviews local branch `slice-3.4` (Slice 3.4, chat), then merges it; then the Phase 3 exit gate
+**Current milestone:** Phase 3: Slices 3.1 to 3.4 are done; 3.3 and 3.4 are proven with the mock only
+**Next smallest task:** the Phase 3 exit gate (waiting for the owner)
 
 ## Must fix before any deployment
 
@@ -32,7 +32,7 @@ Agreed with the owner on 2026-11-24. Built in Slice 3.1:
 - **Known gap (owner: the slice that adds account deletion):** it must refuse to delete a workspace's last owner, or transfer or delete the workspace first, with tests. Slice 1.3 enforces this for leaving, removal and demotion; account deletion does not exist in the app yet. Lock order and edge cases: `docs/DATABASE_DESIGN.md`.
 - The real-provider tests of Slices 2.3 and 3.1 passed on 2026-11-25.
 - **Slice 3.3, BLOCKED:** the runtime check with the real provider (one conversation, a retry, a cancelled answer). Needs the owner's yes.
-- **Slice 3.2, BLOCKED:** breaking one guard at a time. The run was stopped by the system for low memory before its first result, and must not be restarted without the owner.
+- ~~Slice 3.2, BLOCKED: breaking one guard at a time~~: rerun on 2026-11-27 with the owner's yes, one test file per process. See the Slice 3.4 review fixes.
 
 ## Phase 1 exit gate
 
@@ -485,7 +485,7 @@ The build guide words the gate further (Slice 2.4):
 - **Commit / push:** `feat(runtime)` commit of 2026-11-26, pushed to `origin/main`.
 - **Next smallest task:** Slice 3.4
 
-### Slice 3.4 — Chat interface and streaming (local branch `slice-3.4`, not merged, not pushed)
+### Slice 3.4 — Chat interface and streaming
 - **Date:** 2026-11-26 (owner away)
 - **What changed:** A conversation list per agent and a chat page. Answers stream in as they are made (`POST .../messages/stream`, server-sent events), and a Stop button cancels them (`POST .../messages/stop`). Sending, answering, complete, stopped and failed are announced; failed and stopped messages can be retried with the same request, also after a reload. Loading, empty, error, not found, paused, archived and no-provider states. All text is plain text: no Markdown, no HTML. The data notice now also names the conversation so far and the agent's instructions. Owners are warned that deleting an agent or workspace deletes everyone's private conversations.
 - **Found by the browser check:** the Next.js proxy keeps the backend connection open for 25 to 40 seconds after the browser stops reading, so a stopped answer kept running and blocked a retry. Fixed with the explicit stop route, which a running answer checks about once a second. A fix that only closed the stream better was tried, proved nothing, and was removed.
@@ -506,4 +506,39 @@ The build guide words the gate further (Slice 2.4):
 - **`/verify`:** NOT_READY, `tests=TIMEOUT`: its backend lane passed (1504 in 586 s), then the frontend lane ran out of time. Not a failure, not worked around; the frontend suite passes on its own (220).
 - **Review:** self-review only (the owner runs `/code-review ultra`). Recorded: Stop pressed before the server has stored the message stops nothing, and behind the proxy the answer may then still be stored while the page says "Stopped".
 - **Known limitations:** no Markdown; long conversations show 50 messages first with "Show earlier messages"; the list shows the newest 100 conversations; conversations have no titles; there is no screen for removing members.
-- **Commit:** on local branch `slice-3.4`, not pushed, not merged.
+- **Commit:** merged into `main` with the review fixes below.
+
+### Slice 3.4 — Fixes from the owner's cloud review (`/code-review ultra`)
+- **Date:** 2026-11-27
+- **Findings:** 10 (4 normal, 6 nits), all fixed, each with tests.
+- **What changed:**
+  1. A stream whose connection closed before its first event never closed its run: the slot (8 per process) was lost and the record stayed `running`. The response now closes its events however it ends, also when the body was never read.
+  2. Stop targets one message: `POST .../messages/stop` takes `{"request_id"}`. It only records a request (`executions.stop_requested_at`, migration `0008`); the run cancels its model call, waits for it to end, gives the slot back, and only then records `cancelled`/`stopped`. So one conversation never holds two slots, and the conversation stays busy until the call has really ended. The model call runs on its own thread, so a stop is noticed within about a second also while the model sends nothing. Providers take a `cancel` event (contract, spending wrapper, mock, Gemini). Stop waits up to 5 seconds for the end, so Retry right after works.
+  3. The page: after a stop or failure, pending is cleared, so a new message can be sent at once. It reloads the newest messages and says what the server kept: the answer ("saved after all"), the message without an answer (Retry), or nothing (the text goes back into the box). Retry is offered only for a message the server has, and is always treated as possibly stored. Retry stays hidden until the server has handled the stop.
+  4. A stopped answer is reported as "stopped", not "took too long", also when it was complete before the next check.
+  5. A test that never covered a provider error in the middle of a stream now does (`provider_timeout`).
+  6. The `slow` mock keeps to the timeout of the whole stream, and stops when cancelled.
+  7. A stopped run records its end once (one transaction, one warning); a run given up by others records nothing more.
+- **Files/modules affected:** `backend/app/modules/{runtime,providers}/`, `backend/migrations/versions/0008_execution_stop_requests.py`, `backend/tests/test_{runtime,gemini,spending,tenant_isolation,conversations}.py`, `frontend/src/features/chat/`, `docs/AI_RUNTIME.md`, `docs/manual-checks/chat-browser-check.js`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (1522, in 6 chunks of at most 6 files) | `backend: .venv\Scripts\python -m pytest` | No skips |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Migration on dev DB | PASS | `alembic upgrade head`, `check`, `downgrade -1`, `upgrade head`, `check` | `0008` |
+| Frontend | PASS (225) | `npm test`, `npm run lint`, `npm run typecheck`, `npm run build` | 5 new chat tests |
+| Browser checks, production build, mock (`slow`) | PASS (48 + 116 + 54 + 99 + 22 + 15 + 59) | `docs/manual-checks/` | chat (2 new checks: Retry at once after a stop, a new message right after a stop), agents, builder, dashboard, auth, workspace, versions. Auth needs uvicorn's `--no-proxy-headers` |
+| Test sensitivity, this fix | backend 17 of 18, frontend 8 of 9 | broke guards one at a time, backend in a copy | Backend: freeing the slot before settling was missed, a test was strengthened and now catches it; Gemini's worker check of the caller's cancel was redundant and was removed. Frontend: the survivor adds a `pending` check that is redundant once pending is cleared |
+| Test sensitivity, Slice 3.2 (rerun) | 32 of 36 | one guard at a time, one test file per process, in a copy | First 31: a database check against a negative message count had no test; added. Survivors: the workspace clause of the creator filter and the delete's own 404 are redundant (the agent is the workspace's; the route's dependency 404s first); `updated_at` is also set by the ORM; the stale-count guard (`populate_existing`) needs a two-connection race test, not written |
+| Real provider | BLOCKED | | Mock only. No Gemini call was made |
+
+- **`/verify`:** `READY_FOR_SHIP tree=d4de833b862d checks=tests not_covered=none` (829 s, `--timeout 2400`). For this, `scripts/run_tests.py` now runs backend files 6 at a time, one pytest process after another (the whole suite in one process needs more memory than is free); a test covers it. The default 600 s limit is too short for the batched suite.
+- **Known limitations:**
+  - A stop that reaches the server before it has stored the message stops nothing; the page then shows what was kept, and the answer may arrive later (a retry is refused with `answer_in_progress` until then).
+  - A Gemini worker waiting for the network may outlive a cancelled call until the connection gives something or its timeout; the call's runtime slot is free at once, its Gemini worker slot (16) is not.
+  - The partial text of a stopped or failed answer is not kept on screen.
+  - P3, open: no test for the stale message count that `populate_existing` prevents (Slice 3.2).
+- **Commit / push:** `fix(chat)` commit on `slice-3.4`, merged into `main` and pushed. Branches `slice-3.1` and `slice-3.4` deleted.
+- **Also added:** `backend/scripts/chat_check.py`, the Phase 3 real-provider check (used in the next step).
+- **Next smallest task:** the Phase 3 exit gate (waiting for the owner)

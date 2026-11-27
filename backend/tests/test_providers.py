@@ -149,9 +149,9 @@ def test_bad_settings_stop_startup(values) -> None:
 
 def test_every_provider_streams_with_the_same_parameters() -> None:
     for implementation in (Provider, MockProvider, GeminiProvider, MeteredProvider):
-        for method in (implementation.complete, implementation.stream):
-            parameters = list(inspect.signature(method).parameters)
-            assert parameters == ["self", "messages", "timeout_seconds", "max_output_tokens"]
+        same = ["self", "messages", "timeout_seconds", "max_output_tokens"]
+        assert list(inspect.signature(implementation.complete).parameters) == same
+        assert list(inspect.signature(implementation.stream).parameters) == [*same, "cancel"]
 
 
 def test_the_mock_streams_what_it_completes() -> None:

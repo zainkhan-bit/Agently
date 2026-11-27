@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://generativelanguage.googleapis.com"
 MAX_RESPONSE_BYTES = 4_000_000
 MAX_ERROR_BYTES = 64_000
+CANCEL_CHECK_SECONDS = 0.25
 # A worker can outlive its call (a stuck name lookup), so it keeps its place until it ends.
 _workers = threading.BoundedSemaphore(16)
 
@@ -78,7 +79,12 @@ class GeminiProvider:
         raise ProviderError()
 
     def stream(
-        self, messages: Sequence[Message], *, timeout_seconds: float, max_output_tokens: int
+        self,
+        messages: Sequence[Message],
+        *,
+        timeout_seconds: float,
+        max_output_tokens: int,
+        cancel: threading.Event | None = None,
     ) -> Stream:
         deadline = time.monotonic() + timeout_seconds
         url, body = self.request(messages, max_output_tokens)
@@ -87,7 +93,7 @@ class GeminiProvider:
         if not _workers.acquire(blocking=False):
             logger.warning("gemini call refused (no free worker)")
             raise ProviderError(uncharged=True)
-        call = _Call(self._client, timeout_seconds, deadline, url, body)
+        call = _Call(self._client, timeout_seconds, deadline, url, body, cancel)
         try:
             threading.Thread(target=call.run, name="gemini", daemon=True).start()
         except BaseException:
@@ -145,13 +151,22 @@ class _Failure:
 class _Call:
     """One request, made on a worker thread. Hands over parsed events, then one error or None."""
 
-    def __init__(self, new_client, timeout_seconds: float, deadline: float, url: str, body) -> None:
+    def __init__(
+        self,
+        new_client,
+        timeout_seconds: float,
+        deadline: float,
+        url: str,
+        body,
+        stop: threading.Event | None = None,
+    ) -> None:
         self._new_client = new_client
         self._timeout = timeout_seconds
         self._url = url
         self._body = body
         self.deadline = deadline
         self.cancelled = threading.Event()
+        self.stop = stop or threading.Event()  # the caller's: set from outside, never here
         self.items: queue.Queue[Any] = queue.Queue(maxsize=64)
 
     def run(self) -> None:
@@ -227,9 +242,11 @@ def _read(call: _Call) -> Stream:
         event: Any = None
         piece = ""
         try:
-            event = call.items.get(timeout=max(0.0, call.deadline - time.monotonic()))
+            event = _wait(call)
         except queue.Empty:
             failure = _Failure(ProviderTimeoutError)
+        except _Cancelled:
+            failure = _Failure()
         if failure is None and time.monotonic() >= call.deadline:
             failure = _Failure(
                 ProviderTimeoutError
@@ -254,6 +271,23 @@ def _read(call: _Call) -> Stream:
     if not finished or tokens is None:
         raise ProviderError()  # cut off, or of unknown cost
     yield Completion("".join(text), *tokens)
+
+
+class _Cancelled(Exception):
+    pass
+
+
+def _wait(call: _Call) -> Any:
+    """The next item, looking now and then whether the caller cancelled."""
+    while True:
+        if call.stop.is_set():
+            raise _Cancelled()
+        left = call.deadline - time.monotonic()
+        try:
+            return call.items.get(timeout=max(0.0, min(CANCEL_CHECK_SECONDS, left)))
+        except queue.Empty:
+            if left <= CANCEL_CHECK_SECONDS:
+                raise
 
 
 def _parse(event: dict[str, Any]) -> tuple[str, bool, Any]:

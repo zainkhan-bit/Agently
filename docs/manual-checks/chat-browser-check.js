@@ -157,6 +157,20 @@ async function main(browser) {
   const afterOnce = await (await context.request.get(`${chatUrl.replace("/workspaces/", "/api/workspaces/")}/messages`)).json();
   check("sending twice quickly stores one message", afterOnce.items.filter((m) => m.content === "Once").length === 1);
 
+  // A stop, then a new message straight away, without reloading.
+  await box.fill("Stop me too");
+  await button("Send").click();
+  await status.filter({ hasText: "answering" }).waitFor();
+  await button("Stop answering").click();
+  await status.filter({ hasText: "Stopped" }).waitFor();
+  check("after a stop, retry is offered at once", await button("Retry the last message").isVisible());
+  await box.fill("A new one");
+  await box.press("Enter");
+  await status.filter({ hasText: "Answer complete." }).waitFor({ timeout: 30000 });
+  const afterNew = await (await context.request.get(`${chatUrl.replace("/workspaces/", "/api/workspaces/")}/messages`)).json();
+  const last = afterNew.items.slice(-3).map((m) => [m.role, m.content.includes("A new one") || m.content === "Stop me too"]);
+  check("a new message can be sent right after a stop", JSON.stringify(last) === JSON.stringify([["user", true], ["user", true], ["assistant", true]]));
+
   // Privacy between members.
   const b = await signUp(browser, "b");
   addMember(b.email, workspace.split("/").pop());

@@ -514,3 +514,22 @@ def test_tests_cannot_reach_the_network() -> None:
         socket.getaddrinfo("generativelanguage.googleapis.com", 443)
     with socket.socket() as s, pytest.raises(NetworkRefusedError):
         s.connect(("203.0.113.1", 443))
+
+
+def test_a_cancel_ends_a_stream_that_is_waiting_for_the_model() -> None:
+    with tcp_server(silent) as url:
+        cancel = threading.Event()
+        stream = GeminiProvider(KEY, LITE, base_url=url).stream(
+            MESSAGES, timeout_seconds=30, max_output_tokens=5, cancel=cancel
+        )
+        threading.Timer(0.3, cancel.set).start()
+        started = time.monotonic()
+        with pytest.raises(ProviderError) as caught:
+            next(stream)
+        assert type(caught.value) is ProviderError and caught.value.uncharged is False
+        assert time.monotonic() - started < 1.5  # long before the timeout
+    # Its worker may wait for the network until the connection gives something, then ends.
+    end = time.monotonic() + 3
+    while gemini._workers._value != 16 and time.monotonic() < end:
+        time.sleep(0.02)
+    assert gemini._workers._value == 16

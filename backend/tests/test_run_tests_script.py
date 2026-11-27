@@ -44,6 +44,16 @@ def test_one_failing_suite_fails_the_run_without_hiding_the_other(script, failin
     assert len(script.calls) == 2
 
 
+def test_backend_files_run_in_batches_one_after_another(script) -> None:
+    files = [f"backend/tests/test_{n}.py" for n in range(script.BATCH * 2 + 1)]
+    script.codes = {"backend": 0}
+    assert script.main(files) == 0
+    sizes = [len(command) - 3 for _, command in script.calls]
+    assert sizes == [script.BATCH, script.BATCH, 1]
+    ran = [file.replace("\\", "/") for _, command in script.calls for file in command[3:]]
+    assert ran == [file.removeprefix("backend/") for file in files]
+
+
 @pytest.mark.parametrize("files", [[], ["other/test_x.py"], ["backend/tests/test_a.py", "x.py"]])
 def test_unknown_files_are_refused(script, files) -> None:
     assert script.main(files) == 2

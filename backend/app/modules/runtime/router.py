@@ -4,9 +4,11 @@ import json
 import uuid
 from collections.abc import Iterator
 
+import anyio
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
+from starlette.concurrency import run_in_threadpool
 
 from app.core.errors import AppError, RateLimitError
 from app.modules.agents.dependencies import AgentInWorkspace
@@ -105,7 +107,7 @@ def stream_message(
 ) -> StreamingResponse:
     """Like ``send_message``, as server-sent events: ``message``, then ``piece`` events with
     text, then ``done`` with both messages, or ``error``. Everything refused before the call is an
-    ordinary error response. Closing the connection cancels the answer.
+    ordinary error response. Closing the connection cancels the answer, also before it began.
     """
     found = service.find_answer(db, conversation, request_id=body.request_id, content=body.content)
     if found is not None:
@@ -123,43 +125,97 @@ def stream_message(
     return _events(run, run.question, None)
 
 
+class StopAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: uuid.UUID  # of the message whose answer is to stop, and of no other
+
+
 @router.post("/messages/stop", status_code=status.HTTP_204_NO_CONTENT)
 def stop_answer(
-    conversation: OwnConversation, agent: AgentInWorkspace, context: MemberContext, db: Db
+    body: StopAnswer,
+    conversation: OwnConversation,
+    agent: AgentInWorkspace,
+    context: MemberContext,
+    db: Db,
 ) -> None:
-    """Stop the answer being made, also when its connection is still open somewhere."""
-    service.stop(db, context, agent.id, conversation.id)
+    """Stop the answer to one message, also when its connection is still open somewhere.
+
+    Returns once it has ended, or after a few seconds; read the messages to see what was kept.
+    """
+    service.stop(db, context, agent.id, conversation.id, body.request_id)
 
 
 def _events(
     run: service.Run | None, question: StoredMessage, answer: StoredMessage | None
 ) -> StreamingResponse:
-    def events() -> Iterator[str]:
-        try:
-            yield _event("message", _message(question))
-            if run is None:
-                yield _event("done", _out(question, answer).model_dump(mode="json"))
-                return
-            failure: AppError | None = None
-            try:
-                for piece in run.pieces():
-                    yield _event("piece", {"text": piece})
-            except AppError as error:  # fixed texts only, so they may be shown
-                failure = error
-            if failure is not None:
-                yield _event("error", {"code": failure.code, "message": failure.message})
-            else:
-                yield _event("done", _out(run.question, run.answer).model_dump(mode="json"))
-        finally:
-            if run is not None:
-                run.close()
-
+    body = _Events(run, question, answer)
     headers = {
         # no-transform: a compressing proxy would hold the pieces back.
         "Cache-Control": "private, no-store, no-transform",
         "X-Accel-Buffering": "no",
     }
-    return StreamingResponse(events(), media_type="text/event-stream", headers=headers)
+    return _EventResponse(body, media_type="text/event-stream", headers=headers)
+
+
+class _EventResponse(StreamingResponse):
+    """Closes its events however the response ends: also when the connection closed before the
+    body was ever read. Then nothing else would close the run and give its slot back.
+    """
+
+    def __init__(self, events: "_Events", **kwargs) -> None:
+        super().__init__(events, **kwargs)
+        self._events = events
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # By now no thread is reading the events: a cancelled read is waited for.
+            with anyio.CancelScope(shield=True):
+                await run_in_threadpool(self._events.close)
+
+
+class _Events:
+    """The events of one answer. Closing it closes the run, whether reading began or not."""
+
+    def __init__(
+        self, run: service.Run | None, question: StoredMessage, answer: StoredMessage | None
+    ) -> None:
+        self._run = run
+        self._events = self._make(question, answer)
+
+    def __iter__(self) -> "_Events":
+        return self
+
+    def __next__(self) -> str:
+        return next(self._events)
+
+    def close(self) -> None:
+        try:
+            self._events.close()
+        finally:
+            if self._run is not None:
+                self._run.close()
+
+    def _make(self, question: StoredMessage, answer: StoredMessage | None) -> Iterator[str]:
+        run = self._run
+        yield _event("message", _message(question))
+        if run is None:
+            yield _event("done", _out(question, answer).model_dump(mode="json"))
+            return
+        failure: AppError | None = None
+        try:
+            for piece in run.pieces():
+                yield _event("piece", {"text": piece})
+        except AppError as error:  # fixed texts only, so they may be shown
+            failure = error
+        finally:
+            run.close()  # before the last event: by then, a retry must find the run ended
+        if failure is not None:
+            yield _event("error", {"code": failure.code, "message": failure.message})
+        else:
+            yield _event("done", _out(run.question, run.answer).model_dump(mode="json"))
 
 
 def _message(message: StoredMessage) -> dict:

@@ -6,6 +6,7 @@ It repeats what people typed, so hostile text comes back as hostile output.
 import html
 import json
 import re
+import threading
 import time
 from collections.abc import Sequence
 
@@ -50,14 +51,28 @@ class MockProvider:
         )
 
     def stream(
-        self, messages: Sequence[Message], *, timeout_seconds: float, max_output_tokens: int
+        self,
+        messages: Sequence[Message],
+        *,
+        timeout_seconds: float,
+        max_output_tokens: int,
+        cancel: threading.Event | None = None,
     ) -> Stream:
         completion = self.complete(
             messages, timeout_seconds=timeout_seconds, max_output_tokens=max_output_tokens
         )
+        cancel = cancel or threading.Event()
+        # Like a real provider: the timeout covers the whole stream, from the first next().
+        deadline = time.monotonic() + timeout_seconds
         for start in range(0, len(completion.text), CHARACTERS_PER_PIECE):
             if self._scenario == "slow":  # time to watch it arrive, or to stop it
-                time.sleep(min(SLOW_PIECE_SECONDS, timeout_seconds))
+                left = deadline - time.monotonic()
+                if cancel.wait(max(0.0, min(SLOW_PIECE_SECONDS, left))):
+                    raise ProviderError()
+                if time.monotonic() >= deadline:
+                    raise ProviderTimeoutError()
+            elif cancel.is_set():
+                raise ProviderError()
             yield TextPiece(completion.text[start : start + CHARACTERS_PER_PIECE])
         yield completion
 

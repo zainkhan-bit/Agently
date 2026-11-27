@@ -1,5 +1,6 @@
 """What every model provider must do. Knows nothing about what the text is used for."""
 
+import threading
 from collections.abc import Generator, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -66,12 +67,19 @@ class Provider(Protocol):
         ...
 
     def stream(
-        self, messages: Sequence[Message], *, timeout_seconds: float, max_output_tokens: int
+        self,
+        messages: Sequence[Message],
+        *,
+        timeout_seconds: float,
+        max_output_tokens: int,
+        cancel: threading.Event | None = None,
     ) -> Stream:
         """Like ``complete``, in pieces. The last item is a Completion with the whole text.
 
         Nothing is sent before the first ``next()``, which starts the timeout for the whole
         stream. ``close()`` cancels; the provider may still charge for a cancelled call.
+        ``cancel`` may be set from another thread: a ``next()`` waiting for the model then
+        ends within about a second, with a ProviderError, and the call is cancelled.
         """
         ...
 

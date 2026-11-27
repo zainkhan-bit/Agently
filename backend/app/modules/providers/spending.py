@@ -6,6 +6,7 @@ outcome keeps it, because the provider may have charged for it.
 """
 
 import logging
+import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -70,11 +71,16 @@ class MeteredProvider:
         return completion
 
     def stream(
-        self, messages: Sequence[Message], *, timeout_seconds: float, max_output_tokens: int
+        self,
+        messages: Sequence[Message],
+        *,
+        timeout_seconds: float,
+        max_output_tokens: int,
+        cancel: threading.Event | None = None,
     ) -> Stream:
         reservation, left = self._pay(messages, timeout_seconds, max_output_tokens)
         inner = self._inner.stream(
-            messages, timeout_seconds=left, max_output_tokens=max_output_tokens
+            messages, timeout_seconds=left, max_output_tokens=max_output_tokens, cancel=cancel
         )
         try:
             while True:

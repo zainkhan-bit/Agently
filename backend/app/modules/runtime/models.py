@@ -93,3 +93,5 @@ class Execution(UUIDPrimaryKeyMixin, Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Someone asked to stop it. The run itself records the end, once its call has ended.
+    stop_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

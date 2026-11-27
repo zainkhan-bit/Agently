@@ -6,6 +6,9 @@ backend/.venv, and from backend/ so that backend/.env is found (otherwise every 
 would be skipped).
 
     python scripts/run_tests.py backend/tests/test_health.py frontend/src/lib/x.test.ts
+
+Backend files run in batches of BATCH, one pytest process after another: the whole suite in one
+process needs more memory than the development machine has free.
 """
 
 import shutil
@@ -15,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VENV = ROOT / "backend" / ".venv"
+BATCH = 6
 
 
 def main(files: list[str]) -> int:
@@ -32,7 +36,9 @@ def main(files: list[str]) -> int:
         if python is None:
             print("backend/.venv is missing: see README, Backend.", file=sys.stderr)
             return 2
-        commands.append(("backend", [str(python), "-m", "pytest", *backend]))
+        for start in range(0, len(backend), BATCH):
+            batch = backend[start : start + BATCH]
+            commands.append(("backend", [str(python), "-m", "pytest", *batch]))
     if frontend:
         npx = shutil.which("npx")
         if npx is None:

@@ -5,9 +5,13 @@
 
 import json
 import logging
+import threading
+import time
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
+import anyio
 import pytest
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -45,17 +49,25 @@ class Recorder:
     def __init__(self, session=None) -> None:
         self.calls, self.reply, self.during, self.closed = [], "Fine.", None, 0
         self.session = session
+        self.cancel = None
 
-    def stream(self, messages, *, timeout_seconds, max_output_tokens):
+    def stream(self, messages, *, timeout_seconds, max_output_tokens, cancel=None):
         self.calls.append((list(messages), timeout_seconds, max_output_tokens))
+        self.cancel = cancel
         try:
             if self.session is not None:
                 assert not self.session.in_transaction()  # the connection went back to the pool
             if self.during:
                 self.during()
-            yield from self.reply if isinstance(self.reply, list) else self._items()
+            yield from self._listed() if isinstance(self.reply, list) else self._items()
         finally:
             self.closed += 1
+
+    def _listed(self):
+        for item in self.reply:
+            if isinstance(item, BaseException):
+                raise item
+            yield item
 
     def _items(self):
         if isinstance(self.reply, BaseException):
@@ -228,13 +240,20 @@ def test_a_stream_sends_the_message_the_pieces_in_order_and_the_stored_answer(
 
 def test_a_failure_during_the_stream_is_an_error_event(r, db_session) -> None:
     r.provider.reply = [TextPiece("half"), ProviderTimeoutError()]
-    r.provider.reply = [TextPiece("half")]
     _, events = stream(r)
     assert [name for name, _ in events] == ["message", "piece", "error"]
     assert events[-1][1] == {
-        "code": "provider_unavailable",
-        "message": ProviderError.message,
+        "code": "provider_timeout",
+        "message": ProviderTimeoutError.message,
     }
+    assert records(db_session) == [("timed_out", "provider_timeout", 1, None)]
+    assert r.provider.closed == 1
+
+
+def test_a_stream_that_simply_ends_is_an_error_event(r, db_session) -> None:
+    r.provider.reply = [TextPiece("half")]
+    _, events = stream(r)
+    assert events[-1][1]["code"] == "provider_unavailable"
     assert records(db_session) == [("failed", "provider_unavailable", 1, None)]
 
 
@@ -263,64 +282,393 @@ def test_a_stream_that_is_not_read_to_the_end_is_cancelled(r, db_session, auth_a
     assert r.provider.closed == 1
 
 
-def test_stopping_cancels_the_running_answer_and_its_call(r, db_session, monkeypatch) -> None:
-    monkeypatch.setattr(service, "STOP_CHECK_SECONDS", 0)
-    stopped = []
+def stop(c, request_id, one=None, client=None):
+    body = {"request_id": str(request_id)}
+    return (client or c.member).post(f"{one or c.one}/messages/stop", json=body)
 
-    def pieces():
-        yield TextPiece("a")
-        stopped.append(r.member.post(f"{r.one}/messages/stop").status_code)
-        yield TextPiece("b")
-        yield Completion("ab", 1, 1)
 
-    r.provider.reply = None
-    r.provider._items = pieces
-    response, events = stream(r)
-    assert stopped == [204]
+class Waiting:
+    """A model that sends nothing until it is cancelled, like one slow to start answering."""
+
+    def __init__(self, provider, before=()) -> None:
+        self.provider, self.before = provider, list(before)
+        self.started = threading.Event()
+        self.ended_by_cancel = 0
+
+    def __call__(self):
+        yield from self.before
+        self.started.set()
+        if not self.provider.cancel.wait(10):
+            raise AssertionError("never cancelled")
+        self.ended_by_cancel += 1
+        raise ProviderError()
+
+
+def in_thread(work):
+    results = []
+    thread = threading.Thread(target=lambda: results.append(work()), daemon=True)
+    thread.start()
+    return thread, results
+
+
+@pytest.fixture
+def live(factory, two_owners, auth_app):
+    """For requests made at the same time: each on its own connection, committed for real."""
+    clients, _, workspace_id = two_owners
+    url = f"/api/workspaces/{workspace_id}/agents"
+    chats = f"{url}/{create(clients[0], url)['id']}/conversations"
+    provider = Recorder()
+    auth_app.dependency_overrides[selection.get_provider] = lambda: provider
+    one = f"{chats}/{start(clients[0], chats)['id']}"
+    return SimpleNamespace(member=clients[0], one=one, provider=provider)
+
+
+def live_records(factory) -> list[tuple]:
+    with factory() as session:
+        rows = session.scalars(select(Execution).order_by(Execution.started_at))
+        return [(e.status, e.error_code, e.message_sequence, e.answer_sequence) for e in rows]
+
+
+def live_stored(factory) -> list[tuple]:
+    with factory() as session:
+        rows = session.scalars(select(StoredMessage).order_by(StoredMessage.sequence))
+        return [(m.role, m.content, m.agent_version) for m in rows]
+
+
+def test_stopping_cancels_the_running_answer_and_its_call(live, factory, monkeypatch) -> None:
+    monkeypatch.setattr(service, "STOP_CHECK_SECONDS", 0.05)
+    request = uuid.uuid4()
+    waiting = Waiting(live.provider, [TextPiece("a")])
+    live.provider.reply, live.provider._items = None, waiting
+    thread, results = in_thread(lambda: stream(live, request_id=request))
+    assert waiting.started.wait(5)
+    began = time.monotonic()
+    assert stop(live, request).status_code == 204
+    assert time.monotonic() - began < 3  # ended without waiting for the model
+    # Stop returns once the run has ended, so the conversation is free at once.
+    assert live_records(factory) == [("cancelled", "stopped", 1, None)]
+    thread.join(5)
+    _, events = results[0]
     assert [name for name, _ in events] == ["message", "piece", "error"]
-    assert events[-1][1]["code"] == "answer_stopped"
+    stopped = service.AnswerStoppedError
+    assert events[-1][1] == {"code": stopped.code, "message": stopped.message}
+    assert live_stored(factory) == [("user", "Hello", None)]
+    assert waiting.ended_by_cancel == 1 and live.provider.closed == 1
+    live.provider._items = Recorder._items.__get__(live.provider)
+    live.provider.reply = "Fine."
+    assert send(live, "next").status_code == 201
+
+
+def test_repeated_stop_and_retry_never_hold_more_than_one_slot_per_conversation(
+    live, factory, monkeypatch
+) -> None:
+    monkeypatch.setattr(service, "STOP_CHECK_SECONDS", 0.05)
+    held, most, lock = [0], [0], threading.Lock()
+    real = threading.BoundedSemaphore(8)
+
+    class Counting:
+        def acquire(self, blocking=True):
+            taken = real.acquire(blocking)
+            if taken:
+                with lock:
+                    held[0] += 1
+                    most[0] = max(most[0], held[0])
+            return taken
+
+        def release(self):
+            with lock:
+                held[0] -= 1
+            real.release()
+
+    monkeypatch.setattr(service, "_slots", Counting())
+    held_when_settled = []
+    real_settle = service.Run._settle
+
+    def settle(self, *args, **kwargs):
+        held_when_settled.append(held[0])  # the conversation is freed only after its slot
+        return real_settle(self, *args, **kwargs)
+
+    monkeypatch.setattr(service.Run, "_settle", settle)
+    request = uuid.uuid4()
+    for _ in range(3):  # stop, then retry the same message
+        waiting = Waiting(live.provider)
+        live.provider.reply, live.provider._items = None, waiting
+        thread, results = in_thread(lambda: stream(live, request_id=request))
+        assert waiting.started.wait(5)
+        assert held[0] == 1
+        assert stop(live, request).status_code == 204
+        assert held[0] == 0  # the call had ended before the stop returned
+        thread.join(5)
+        assert results[0][1][-1][1]["code"] == "answer_stopped"
+    assert most[0] == 1
+    assert held_when_settled == [0, 0, 0]
+    assert [row[:2] for row in live_records(factory)] == [("cancelled", "stopped")] * 3
+    assert [real.acquire(blocking=False) for _ in range(8)] == [True] * 8
+
+
+def test_a_stopped_run_records_its_end_once(live, monkeypatch, caplog) -> None:
+    monkeypatch.setattr(service, "STOP_CHECK_SECONDS", 0.05)
+    request = uuid.uuid4()
+    waiting = Waiting(live.provider)
+    live.provider.reply, live.provider._items = None, waiting
+    settled = []
+    real = service.Run._settle
+    monkeypatch.setattr(
+        service.Run, "_settle", lambda self, *a, **k: settled.append(a) or real(self, *a, **k)
+    )
+    with caplog.at_level(logging.WARNING, logger=service.__name__):
+        thread, _ = in_thread(lambda: stream(live, request_id=request))
+        assert waiting.started.wait(5)
+        stop(live, request)
+        thread.join(5)
+    assert settled == [("cancelled", "answer_stopped")]
+    assert [m for m in caplog.messages if m.startswith("answer not stored")] == [
+        "answer not stored (stopped)"
+    ]
+
+
+def test_a_stop_keeps_the_conversation_busy_until_the_call_has_ended(
+    r, db_session, monkeypatch
+) -> None:
+    """Asking to stop changes no status: only the run records the end, after its call."""
+    monkeypatch.setattr(service, "STOP_WAIT_SECONDS", 0.2)
+    request = uuid.uuid4()
+    run = accept(r, db_session, request_id=request)
+    assert stop(r, request).status_code == 204  # nothing reads the pieces: it cannot end
+    assert records(db_session) == [("running", None, 1, None)]
+    assert code(send(r, "Hello", request)) == "answer_in_progress"
+    with pytest.raises(service.AnswerStoppedError):
+        list(run.pieces())
+    run.close()
     assert records(db_session) == [("cancelled", "stopped", 1, None)]
-    assert stored(db_session) == [("user", "Hello", None)]
-    assert r.provider.closed == 1
-    r.provider._items = Recorder._items.__get__(r.provider)
-    r.provider.reply = "Fine."
-    assert send(r, "next").status_code == 201
+    assert send(r, "Hello", request).status_code == 201
+
+
+def test_a_stop_reaches_only_the_answer_to_its_own_message(r, db_session, monkeypatch) -> None:
+    monkeypatch.setattr(service, "STOP_WAIT_SECONDS", 0.2)
+    answered = uuid.uuid4()
+    send(r, "first", answered)
+    run = accept(r, db_session, "second")
+    for other in (answered, uuid.uuid4()):
+        assert stop(r, other).status_code == 204
+    assert records(db_session)[-1] == ("running", None, 3, None)
+    assert db_session.scalars(select(Execution.stop_requested_at)).all() == [None, None]
+    run.close()
 
 
 def test_stopping_with_nothing_running_changes_nothing(r, db_session) -> None:
-    send(r)
-    assert r.member.post(f"{r.one}/messages/stop").status_code == 204
+    request = uuid.uuid4()
+    send(r, request_id=request)
+    assert stop(r, request).status_code == 204
     assert records(db_session) == [("succeeded", None, 1, 2)]
 
 
-def test_stopping_touches_no_other_conversation(r, db_session) -> None:
-    other = accept(r, db_session)  # running in the member's conversation
+def test_stopping_touches_no_other_conversation(r, db_session, monkeypatch) -> None:
+    monkeypatch.setattr(service, "STOP_WAIT_SECONDS", 0.2)
+    request = uuid.uuid4()
+    other = accept(r, db_session, request_id=request)  # running in the member's conversation
     owners = f"{r.chats}/{start(r.owner, r.chats)['id']}"
-    assert r.owner.post(f"{owners}/messages/stop").status_code == 204
+    assert stop(r, request, owners, r.owner).status_code == 204
     second = f"{r.chats}/{start(r.member, r.chats)['id']}"
-    assert r.member.post(f"{second}/messages/stop").status_code == 204
+    assert stop(r, request, second).status_code == 204
     assert records(db_session) == [("running", None, 1, None)]
+    assert db_session.scalars(select(Execution.stop_requested_at)).all() == [None]
+    other.close()
+
+
+def test_a_stop_needs_its_request(r, db_session) -> None:
+    for body in (None, {}, {"request_id": "x"}, {"request_id": str(uuid.uuid4()), "more": 1}):
+        assert r.member.post(f"{r.one}/messages/stop", json=body).status_code == 422
+
+
+def test_a_stop_that_comes_with_the_answer_is_reported_as_a_stop(r, db_session) -> None:
+    """The answer was complete before the next stop check: it is still not kept."""
+    request = uuid.uuid4()
+
+    def stop_now():  # while the run waits for the model, so nothing else uses the session
+        db_session.execute(update(Execution).values(stop_requested_at=clock.now()))
+        db_session.commit()
+
+    r.provider.during = stop_now
+    response = send(r, "Hello", request)
+    assert (response.status_code, code(response)) == (409, "answer_stopped")
+    assert response.json()["error"]["message"] == service.AnswerStoppedError.message
+    assert stored(db_session) == [("user", "Hello", None)]
+    assert records(db_session) == [("cancelled", "stopped", 1, None)]
+
+
+def test_a_run_given_up_by_others_records_nothing_more(r, db_session, advance, monkeypatch) -> None:
+    monkeypatch.setattr(service, "STOP_CHECK_SECONDS", 0)
+    request = uuid.uuid4()
+    late = accept(r, db_session, request_id=request)
+    advance(seconds=81)
+    r.provider.reply = [TextPiece("a"), TextPiece("b"), Completion("ab", 1, 1)]
+    other = accept(r, db_session, "other")  # gives the late one up
+    settled = []
+    monkeypatch.setattr(service.Run, "_settle", lambda self, *a, **k: settled.append(a))
+    with pytest.raises(service.AnswerDiscardedError):
+        list(late.pieces())
+    late.close()
+    assert settled == []
     other.close()
 
 
 def test_the_stop_check_is_not_made_after_every_piece(r, db_session, monkeypatch) -> None:
     checks = []
-    monkeypatch.setattr(service.Run, "_stopped", lambda self: checks.append(1) or False)
+    monkeypatch.setattr(service.Run, "_interrupted", lambda self: checks.append(1))
     r.provider.reply = [TextPiece("a"), TextPiece("b"), Completion("ab", 1, 1)]
     assert send(r).status_code == 201
     assert checks == []
 
 
-def test_the_slow_mock_takes_its_time(configure, monkeypatch) -> None:
+def test_the_stop_check_is_made_while_the_model_sends_nothing(r, db_session, monkeypatch) -> None:
+    monkeypatch.setattr(service, "STOP_CHECK_SECONDS", 0.05)
+    checks = []
+    monkeypatch.setattr(service.Run, "_interrupted", lambda self: checks.append(1))
+
+    def slow():
+        time.sleep(0.3)
+        yield TextPiece("a")
+        yield Completion("a", 1, 1)
+
+    r.provider.reply, r.provider._items = None, slow
+    assert send(r).status_code == 201
+    assert len(checks) >= 3
+
+
+class FakeCancel:
+    def __init__(self, after=None) -> None:
+        self.waits, self.after = [], after
+
+    def wait(self, seconds):
+        self.waits.append(seconds)
+        return self.after is not None and len(self.waits) > self.after
+
+    def is_set(self):
+        return False
+
+
+MOCK_MESSAGES = [Message(Role.USER, "<user_message>\nHi\n</user_message>")]
+
+
+def test_the_slow_mock_takes_its_time(configure) -> None:
     from app.modules.providers import mock
 
-    slept = []
-    monkeypatch.setattr(mock.time, "sleep", slept.append)
-    messages = [Message(Role.USER, "<user_message>\nHi\n</user_message>")]
+    cancel = FakeCancel()
     pieces = list(
-        mock.MockProvider("slow").stream(messages, timeout_seconds=5, max_output_tokens=99)
+        mock.MockProvider("slow").stream(
+            MOCK_MESSAGES, timeout_seconds=5, max_output_tokens=99, cancel=cancel
+        )
     )
-    assert len(slept) == len(pieces) - 1 and set(slept) == {mock.SLOW_PIECE_SECONDS}
+    assert len(cancel.waits) == len(pieces) - 1
+    assert all(0 < seconds <= mock.SLOW_PIECE_SECONDS for seconds in cancel.waits)
+
+
+def test_the_slow_mock_ends_when_cancelled(configure) -> None:
+    from app.modules.providers import mock
+
+    stream = mock.MockProvider("slow").stream(
+        MOCK_MESSAGES, timeout_seconds=5, max_output_tokens=99, cancel=FakeCancel(after=1)
+    )
+    assert isinstance(next(stream), TextPiece)
+    with pytest.raises(ProviderError):
+        next(stream)
+
+
+def test_the_slow_mock_keeps_to_the_timeout_of_the_whole_stream(configure) -> None:
+    from app.modules.providers import mock
+
+    long = [Message(Role.USER, "<user_message>\n" + "x" * 2_000 + "\n</user_message>")]
+    began = time.monotonic()
+    stream = mock.MockProvider("slow").stream(long, timeout_seconds=0.5, max_output_tokens=999)
+    with pytest.raises(ProviderTimeoutError):
+        list(stream)
+    assert time.monotonic() - began < 1.5
+
+
+# The slot of a stream whose connection closed before it was read.
+
+
+def _closed_early(spec_version):
+    """A connection that is gone before any of the answer is read, as servers report it."""
+    sent = []
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        sent.append(message["type"])
+        if spec_version == "2.4":
+            raise OSError("gone")
+        await anyio.sleep_forever()  # until the closed connection is noticed
+
+    scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": spec_version}}
+    return scope, receive, send, sent
+
+
+@pytest.mark.parametrize("spec_version", ["2.3", "2.4"])
+def test_a_stream_closed_before_it_was_read_gives_its_slot_back(
+    r, db_session, monkeypatch, spec_version
+) -> None:
+    from app.modules.runtime import router
+
+    slots = service.threading.BoundedSemaphore(8)
+    monkeypatch.setattr(service, "_slots", slots)
+    run = accept(r, db_session)
+    response = router._events(run, run.question, None)
+    scope, receive, send, sent = _closed_early(spec_version)
+
+    async def call():
+        try:
+            await response(scope, receive, send)
+        except Exception:  # noqa: BLE001, S110 - how a closed connection may surface
+            pass
+
+    anyio.run(call)
+    assert sent == ["http.response.start"]  # the body was never read
+    assert records(db_session) == [("cancelled", "cancelled", 1, None)]
+    assert r.provider.calls == []
+    assert [slots.acquire(blocking=False) for _ in range(8)] == [True] * 8
+
+
+def test_through_the_whole_app_a_dropped_stream_gives_its_slot_back(
+    r, db_session, auth_app, monkeypatch
+) -> None:
+    """As uvicorn does it: after a disconnect, sending does nothing and receiving says so."""
+    slots = service.threading.BoundedSemaphore(8)
+    monkeypatch.setattr(service, "_slots", slots)
+    headers = [(b"content-type", b"application/json")]
+    headers += [(k.lower().encode(), v.encode()) for k, v in r.member.headers.items()]
+    cookie = "; ".join(f"{name}={value}" for name, value in r.member.cookies.items())
+    headers.append((b"cookie", cookie.encode()))
+    path = f"{r.one}/messages/stream"
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": ("testclient", 50000),
+        "server": ("testserver", 80),
+    }
+    body = json.dumps({"request_id": str(uuid.uuid4()), "content": "Hello"}).encode()
+    incoming = [{"type": "http.request", "body": body, "more_body": False}]
+
+    async def receive():
+        return incoming.pop(0) if incoming else {"type": "http.disconnect"}
+
+    async def send(message):
+        pass
+
+    anyio.run(auth_app, scope, receive, send)
+    assert stored(db_session)[0] == ("user", "Hello", None)
+    assert [row[0] for row in records(db_session)] in (["cancelled"], ["succeeded"])
+    assert [slots.acquire(blocking=False) for _ in range(8)] == [True] * 8
 
 
 # Repeats

@@ -28,23 +28,28 @@ type History =
   | { kind: "missing" }
   | { kind: "error"; message: string };
 
-/** The message being answered. Its text is shown as it arrives; nothing here is HTML. */
+/**
+ * The message being answered, until the answer is complete, refused, stopped or failed. Its text
+ * is shown as it arrives; nothing here is HTML.
+ */
 type Pending = {
   requestId: string;
   content: string;
-  phase: "sending" | "generating" | "failed" | "stopped";
+  phase: "sending" | "generating" | "stopping";
   text: string;
-  error: string;
   /** Whether the server has the message: then it is in the list, and only the answer is missing. */
   stored: boolean;
 };
 
+/** How the last answer ended. Shown until the next message is sent. */
+type Outcome = { text: string; alert: boolean };
+
 const STATUS: Record<Pending["phase"], string> = {
   sending: "Sending…",
   generating: "The agent is answering…",
-  failed: "No answer.",
-  stopped: "Stopped. No answer was saved.",
+  stopping: "Stopping…",
 };
+const STOPPED = "Stopped. No answer was saved.";
 
 function merge(messages: ChatMessage[], added: ChatMessage[]): ChatMessage[] {
   const byId = new Map(messages.map((message) => [message.id, message]));
@@ -71,10 +76,12 @@ export function ChatView({ workspaceId, agentId, conversationId }: Props) {
   const [history, setHistory] = useState<History>({ kind: "loading" });
   const [draft, setDraft] = useState("");
   const [pending, setPending] = useState<Pending | null>(null);
-  const [notice, setNotice] = useState("");
+  const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [moreError, setMoreError] = useState<string | null>(null);
+  // From sending until what happened is shown: nothing else may be sent meanwhile.
   const busy = useRef(false);
   const controller = useRef<AbortController | null>(null);
+  const answering = useRef<string | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
 
   const load = useCallback(async () => {
@@ -94,12 +101,17 @@ export function ChatView({ workspaceId, agentId, conversationId }: Props) {
     void load();
   }, [load]);
 
-  /** Tells the server too: a proxy may keep the connection open after the browser closed it. */
+  /**
+   * Tells the server too: a proxy may keep the connection open after the browser closed it.
+   * Only the answer to this message is stopped; the server replies once it has ended.
+   */
   const stopOnServer = useCallback(
-    (keepalive = false) =>
+    (requestId: string, keepalive = false) =>
       fetch(`/api${path}/messages/stop`, {
         method: "POST",
         credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: requestId }),
         keepalive,
       }).catch(() => undefined),
     [path],
@@ -108,12 +120,25 @@ export function ChatView({ workspaceId, agentId, conversationId }: Props) {
   // Leaving the page stops the answer: the server then saves none.
   useEffect(
     () => () => {
-      if (!controller.current) return;
+      if (!controller.current || !answering.current) return;
       controller.current.abort();
-      void stopOnServer(true);
+      void stopOnServer(answering.current, true);
     },
     [stopOnServer],
   );
+
+  /** The newest messages, without hiding the ones shown meanwhile. Null if they could not be read. */
+  const refreshLatest = useCallback(async (): Promise<ChatMessage[] | null> => {
+    try {
+      const { data } = await apiFetch<MessagePage>(`${path}/messages`, { cache: "no-store" });
+      setHistory((now) =>
+        now.kind === "ready" ? { ...now, messages: merge(now.messages, data.items) } : now,
+      );
+      return data.items;
+    } catch {
+      return null;
+    }
+  }, [path]);
 
   const add = useCallback((messages: ChatMessage[]) => {
     setHistory((now) =>
@@ -136,21 +161,54 @@ export function ChatView({ workspaceId, agentId, conversationId }: Props) {
 
   const { agent } = agentState;
   const messages = history.messages;
-  const running = pending?.phase === "sending" || pending?.phase === "generating";
+  const running = pending !== null;
   const available = builder === "available" && disclosure !== null;
   const canSend = agent.status === "active" && available;
   const repeatable = pending === null ? unanswered(messages) : null;
 
+  /** What the server says that may change what can be done next. */
+  function react(error: ApiError) {
+    if (error.code === "disclosure_changed") void loadBuilder();
+    if (error.code === "agent_paused" || error.code === "agent_archived") void refreshAgent();
+  }
+
+  /**
+   * After a stop or a failure, show what the server actually kept rather than guess: the
+   * answer may have been saved, or the message may not have been.
+   */
+  async function showWhatWasKept(requestId: string, content: string, ended: Outcome) {
+    const latest = await refreshLatest();
+    setPending(null);
+    busy.current = false;
+    answering.current = null;
+    if (latest === null) {
+      setOutcome({ ...ended, text: `${ended.text} Reload the page to see what was saved.` });
+      return;
+    }
+    const question = latest.find((message) => message.request_id === requestId);
+    const answered = question && latest.some((m) => m.sequence === question.sequence + 1);
+    if (answered) {
+      setOutcome({ text: "The answer was saved after all.", alert: false });
+    } else if (question) {
+      setOutcome(ended);
+    } else {
+      setDraft((now) => now || content);
+      setOutcome({ ...ended, text: `${ended.text} Your message was not saved: it is back below.` });
+    }
+  }
+
+  /** ``stored``: whether the server may already have this message, as for every retry. */
   async function send(requestId: string, content: string, stored: boolean) {
     if (busy.current || disclosure === null) return;
     busy.current = true;
+    answering.current = requestId;
     const abort = new AbortController();
     controller.current = abort;
-    setNotice("");
-    setPending({ requestId, content, phase: "sending", text: "", error: "", stored });
-    const update = (change: Partial<Pending>) =>
-      setPending((now) => (now && now.requestId === requestId ? { ...now, ...change } : now));
-    let refused = false;
+    setOutcome(null);
+    setPending({ requestId, content, phase: "sending", text: "", stored });
+    let answered = false;
+    let failure: string | null = null;
+    let refused: ApiError | null = null;
     try {
       await streamMessage(
         `${path}/messages/stream?disclosure=${disclosure}`,
@@ -159,55 +217,62 @@ export function ChatView({ workspaceId, agentId, conversationId }: Props) {
         (event) => {
           if (event.type === "message") {
             add([event.message]);
-            update({ phase: "generating", stored: true });
+            setPending((now) =>
+              now && now.requestId === requestId ? { ...now, phase: "generating", stored: true } : now,
+            );
           } else if (event.type === "piece") {
             setPending((now) =>
               now && now.requestId === requestId ? { ...now, text: now.text + event.text } : now,
             );
           } else if (event.type === "done") {
             add([event.answer.message, event.answer.answer]);
-            setPending(null);
-            setNotice("Answer complete.");
+            answered = true;
           } else {
-            update({ phase: "failed", error: event.message });
+            failure = event.message;
           }
         },
       );
     } catch (error) {
       if (abort.signal.aborted) {
-        update({ phase: "stopped" });
+        // Stopped: stopAnswer shows the outcome once the server has stopped too.
       } else if (error instanceof ApiError && error.status === 401) {
         router.replace("/login");
       } else if (error instanceof ApiError && error.status < 500 && !stored) {
-        // Refused before anything was stored: the text goes back where it was typed.
-        refused = true;
-        setPending(null);
-        setDraft((now) => now || content);
-        setNotice(errorMessage(error));
-        if (error.code === "disclosure_changed") void loadBuilder();
-        if (error.code === "agent_paused" || error.code === "agent_archived") {
-          void refreshAgent();
-        }
-        if (error.status === 404) void load();
+        refused = error;
       } else {
-        const text =
+        failure =
           error instanceof StreamBrokenError || error instanceof NetworkError
             ? new StreamBrokenError().message
             : errorMessage(error);
-        update({ phase: "failed", error: text });
-        if (error instanceof ApiError && error.code === "answer_in_progress") void load();
+        if (error instanceof ApiError) react(error);
       }
     } finally {
-      busy.current = false;
       controller.current = null;
-      if (refused) composer.current?.focus();
+    }
+    if (abort.signal.aborted) return;
+    if (answered || refused || failure === null) {
+      setPending(null);
+      busy.current = false;
+      answering.current = null;
+    }
+    if (answered) {
+      setOutcome({ text: "Answer complete.", alert: false });
+    } else if (refused) {
+      // A new message refused before anything was stored: the text goes back where it was typed.
+      setDraft((now) => now || content);
+      setOutcome({ text: errorMessage(refused), alert: false });
+      react(refused);
+      if (refused.status === 404) void load();
+      composer.current?.focus();
+    } else if (failure !== null) {
+      await showWhatWasKept(requestId, content, { text: failure, alert: true });
     }
   }
 
   function submit(event: FormEvent) {
     event.preventDefault();
     const content = draft;
-    if (!canSend || busy.current || pending || content.trim() === "") return;
+    if (!canSend || busy.current || content.trim() === "") return;
     setDraft("");
     void send(crypto.randomUUID(), content, false);
   }
@@ -220,14 +285,19 @@ export function ChatView({ workspaceId, agentId, conversationId }: Props) {
     }
   }
 
+  /** Retry stays unavailable until the server has stopped: it would stop the retry too. */
   async function stopAnswer() {
+    if (!pending || pending.phase === "stopping") return;
+    const { requestId, content } = pending;
+    setPending({ ...pending, phase: "stopping" });
     controller.current?.abort();
-    await stopOnServer();
+    await stopOnServer(requestId);
+    await showWhatWasKept(requestId, content, { text: STOPPED, alert: false });
   }
 
+  /** Only a message the server has: one it does not have went back to the box. */
   function retry() {
-    if (pending) void send(pending.requestId, pending.content, pending.stored);
-    else if (repeatable?.request_id) void send(repeatable.request_id, repeatable.content, true);
+    if (repeatable?.request_id) void send(repeatable.request_id, repeatable.content, true);
   }
 
   async function loadEarlier() {
@@ -255,7 +325,7 @@ export function ChatView({ workspaceId, agentId, conversationId }: Props) {
       document.getElementById("content")?.focus();
       router.replace(chatsPath(workspaceId, agentId));
     } catch (error) {
-      setNotice(errorMessage(error));
+      setOutcome({ text: errorMessage(error), alert: false });
     }
   }
 
@@ -304,26 +374,30 @@ export function ChatView({ workspaceId, agentId, conversationId }: Props) {
             </li>
           )}
           {pending && pending.phase !== "sending" && (
-            <li className="flex flex-col gap-1" aria-busy={pending.phase === "generating"}>
+            <li className="flex flex-col gap-1" aria-busy="true">
               <span className="font-semibold">{agent.name}</span>
               {pending.text && <p className={textClass}>{pending.text}</p>}
-              {pending.text && !running && <p className="text-sm">Incomplete, not saved.</p>}
-              {pending.phase === "generating" && !pending.text && <p>…</p>}
+              {!pending.text && <p>…</p>}
             </li>
           )}
         </ol>
       )}
       <p role="status" aria-live="polite">
-        {pending ? STATUS[pending.phase] : notice}
+        {pending ? STATUS[pending.phase] : outcome && !outcome.alert ? outcome.text : ""}
       </p>
-      {pending?.phase === "failed" && <p role="alert">{pending.error}</p>}
+      {!pending && outcome?.alert && <p role="alert">{outcome.text}</p>}
       <div className="flex flex-wrap gap-2">
         {running && (
-          <button type="button" onClick={() => void stopAnswer()} className={buttonClass}>
+          <button
+            type="button"
+            onClick={() => void stopAnswer()}
+            aria-disabled={pending.phase === "stopping"}
+            className={buttonClass}
+          >
             Stop answering
           </button>
         )}
-        {((pending && !running) || repeatable) && canSend && (
+        {repeatable && canSend && (
           <button type="button" onClick={retry} className={buttonClass}>
             Retry the last message
           </button>
@@ -355,7 +429,7 @@ export function ChatView({ workspaceId, agentId, conversationId }: Props) {
         <button
           type="submit"
           disabled={!canSend}
-          aria-disabled={running || pending !== null || draft.trim() === ""}
+          aria-disabled={running || draft.trim() === ""}
           className={buttonClass}
         >
           Send

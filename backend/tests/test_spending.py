@@ -46,7 +46,8 @@ class Fake:
             raise self.result
         return self.result
 
-    def stream(self, messages, *, timeout_seconds, max_output_tokens):
+    def stream(self, messages, *, timeout_seconds, max_output_tokens, cancel=None):
+        self.cancel = cancel
         self.streams.append(self._stream(timeout_seconds))
         return self.streams[-1]
 
@@ -381,3 +382,11 @@ def test_the_ledger_holds_no_text_and_no_people() -> None:
         "created_at",
     }
     assert not ProviderSpend.__table__.foreign_keys
+
+
+def test_a_cancel_is_passed_on_to_the_call(fake, metered) -> None:
+    cancel = threading.Event()
+    stream = metered.stream(MESSAGES, timeout_seconds=20, max_output_tokens=TOKENS, cancel=cancel)
+    next(stream)
+    stream.close()
+    assert fake.cancel is cancel

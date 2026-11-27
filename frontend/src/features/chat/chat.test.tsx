@@ -57,6 +57,17 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 const streamCalls = () => fetchMock.mock.calls.filter(([url]) => url.startsWith(STREAM));
 const sentBody = (n = 0) => JSON.parse(String(streamCalls()[n][1]?.body)) as Record<string, string>;
 const button = (name: string | RegExp) => screen.getByRole("button", { name });
+const STOP = `${CHAT}/messages/stop`;
+const stopCalls = () => fetchMock.mock.calls.filter(([url]) => url === STOP);
+const stopped = () => new Response(null, { status: 204 });
+/** A response that comes only when `release` is called. */
+function later() {
+  let release!: () => void;
+  const done = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { response: async () => (await done, stopped()), release };
+}
 const composer = () => screen.getByLabelText("Message") as HTMLTextAreaElement;
 
 /** A response whose events arrive one by one, when `push` is called; `end` closes it. */
@@ -227,17 +238,105 @@ describe("chat", () => {
     first.push(event("message", message(1, "user", "Hello")));
     first.push(event("piece", { text: "Partial" }));
     await screen.findByText("Partial");
-    routes[`POST ${CHAT}/messages/stop`] = () => new Response(null, { status: 204 });
+    const stop = later();
+    routes[`POST ${STOP}`] = stop.response;
+    routes[`GET ${CHAT}/messages`] = () =>
+      Response.json({
+        items: [{ ...message(1, "user", "Hello"), request_id: sentBody().request_id }],
+        next_before: null,
+      });
     fireEvent.click(button("Stop answering"));
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Stopped"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Stopping"));
     expect(streamCalls()[0][1]?.signal?.aborted).toBe(true);
-    expect(fetchMock.mock.calls.some(([url]) => url === `${CHAT}/messages/stop`)).toBe(true);
-    expect(screen.getByText("Incomplete, not saved.")).toBeInTheDocument();
+    // Only the answer to this message, and no retry until the server has stopped it.
+    expect(JSON.parse(String(stopCalls()[0][1]?.body))).toEqual({ request_id: sentBody().request_id });
+    expect(screen.queryByRole("button", { name: "Retry the last message" })).toBeNull();
+    stop.release();
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Stopped. No answer was saved."));
+    expect(screen.queryByText("Partial")).toBeNull();
     const second = live();
     routes[`POST ${STREAM}`] = second.response;
     fireEvent.click(button("Retry the last message"));
     expect(sentBody(1)).toEqual(sentBody(0));
     second.end();
+  });
+
+  it("sends a new message after a stop", async () => {
+    const first = live();
+    routes[`POST ${STREAM}`] = first.response;
+    view();
+    await screen.findByLabelText("Message");
+    type("Hello");
+    fireEvent.click(button("Send"));
+    first.push(event("message", message(1, "user", "Hello")));
+    routes[`POST ${STOP}`] = stopped;
+    routes[`GET ${CHAT}/messages`] = page([message(1, "user", "Hello")]);
+    fireEvent.click(button("Stop answering"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Stopped"));
+    routes[`POST ${STREAM}`] = live().response;
+    type("Something else");
+    expect(button("Send")).toHaveAttribute("aria-disabled", "false");
+    fireEvent.click(button("Send"));
+    await waitFor(() => expect(streamCalls()).toHaveLength(2));
+    expect(sentBody(1).content).toBe("Something else");
+    expect(sentBody(1).request_id).not.toBe(sentBody(0).request_id);
+  });
+
+  it("shows an answer that was saved although it was stopped", async () => {
+    const first = live();
+    routes[`POST ${STREAM}`] = first.response;
+    view();
+    await screen.findByLabelText("Message");
+    type("Hello");
+    fireEvent.click(button("Send"));
+    routes[`POST ${STOP}`] = stopped;
+    routes[`GET ${CHAT}/messages`] = () => {
+      const id = sentBody().request_id;
+      return Response.json({
+        items: [{ ...message(1, "user", "Hello"), request_id: id }, message(2, "assistant", "Kept")],
+        next_before: null,
+      });
+    };
+    fireEvent.click(button("Stop answering"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("saved after all"));
+    expect(screen.getByText("Kept")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Retry the last message" })).toBeNull();
+  });
+
+  it("gives the text back when it was stopped before the server kept it", async () => {
+    routes[`POST ${STREAM}`] = live().response;
+    view();
+    await screen.findByLabelText("Message");
+    type("Keep me");
+    fireEvent.click(button("Send"));
+    routes[`POST ${STOP}`] = stopped;
+    fireEvent.click(button("Stop answering"));
+    await waitFor(() => expect(composer().value).toBe("Keep me"));
+    expect(screen.getByRole("status")).toHaveTextContent("Your message was not saved");
+    expect(screen.queryByRole("button", { name: "Retry the last message" })).toBeNull();
+  });
+
+  it("treats a retry as a message the server may have", async () => {
+    // Stopped while sending, but the server had stored it: the reload shows it.
+    routes[`POST ${STREAM}`] = live().response;
+    view();
+    await screen.findByLabelText("Message");
+    type("Hello");
+    fireEvent.click(button("Send"));
+    routes[`POST ${STOP}`] = stopped;
+    const kept = () => ({ ...message(1, "user", "Hello"), request_id: sentBody().request_id });
+    routes[`GET ${CHAT}/messages`] = () => Response.json({ items: [kept()], next_before: null });
+    fireEvent.click(button("Stop answering"));
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Stopped"));
+    routes[`POST ${STREAM}`] = () => fail(409, "answer_in_progress", "The agent is still answering.");
+    fireEvent.click(button("Retry the last message"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("The agent is still answering.");
+    expect(sentBody(1)).toEqual(sentBody(0));
+    expect(composer().value).toBe(""); // not offered as a new message
+    expect(screen.getByText("Hello")).toBeInTheDocument();
+    expect(button("Retry the last message")).toBeInTheDocument();
+    const reloads = fetchMock.mock.calls.filter(([url]) => url === `${CHAT}/messages`);
+    expect(reloads.length).toBeGreaterThanOrEqual(3); // first load, after the stop, after the refusal
   });
 
   it("puts refused text back and shows why", async () => {
@@ -259,13 +358,38 @@ describe("chat", () => {
     type("Hello");
     fireEvent.click(button("Send"));
     stream.push(event("message", message(1, "user", "Hello")));
+    stream.push(event("piece", { text: "Half" }));
+    routes[`GET ${CHAT}/messages`] = () =>
+      Response.json({
+        items: [{ ...message(1, "user", "Hello"), request_id: sentBody().request_id }],
+        next_before: null,
+      });
     stream.push(event("error", { code: "provider_timeout", message: "Took too long." }));
     stream.end();
     expect(await screen.findByRole("alert")).toHaveTextContent("Took too long.");
-    expect(screen.getByRole("status")).toHaveTextContent("No answer.");
+    expect(screen.queryByText("Half")).toBeNull();
     routes[`POST ${STREAM}`] = live().response;
     fireEvent.click(button("Retry the last message"));
     expect(sentBody(1)).toEqual(sentBody(0));
+  });
+
+  it("sends a new message after a failure", async () => {
+    const stream = live();
+    routes[`POST ${STREAM}`] = stream.response;
+    view();
+    await screen.findByLabelText("Message");
+    type("Hello");
+    fireEvent.click(button("Send"));
+    stream.push(event("message", message(1, "user", "Hello")));
+    routes[`GET ${CHAT}/messages`] = page([message(1, "user", "Hello")]);
+    stream.push(event("error", { code: "provider_timeout", message: "Took too long." }));
+    stream.end();
+    await screen.findByRole("alert");
+    routes[`POST ${STREAM}`] = live().response;
+    type("Next");
+    fireEvent.click(button("Send"));
+    await waitFor(() => expect(streamCalls()).toHaveLength(2));
+    expect(sentBody(1).content).toBe("Next");
   });
 
   it("says that a broken connection may have saved the answer", async () => {
@@ -276,6 +400,11 @@ describe("chat", () => {
     type("Hello");
     fireEvent.click(button("Send"));
     stream.push(event("message", message(1, "user", "Hello")));
+    routes[`GET ${CHAT}/messages`] = () =>
+      Response.json({
+        items: [{ ...message(1, "user", "Hello"), request_id: sentBody().request_id }],
+        next_before: null,
+      });
     stream.end();
     expect(await screen.findByRole("alert")).toHaveTextContent("may have been saved");
     expect(button("Retry the last message")).toBeInTheDocument();
@@ -396,11 +525,12 @@ describe("chat", () => {
     type("Hello");
     fireEvent.click(button("Send"));
     await waitFor(() => expect(streamCalls()).toHaveLength(1));
-    routes[`POST ${CHAT}/messages/stop`] = () => new Response(null, { status: 204 });
+    routes[`POST ${STOP}`] = stopped;
     unmount();
     expect(streamCalls()[0][1]?.signal?.aborted).toBe(true);
-    const stop = fetchMock.mock.calls.find(([url]) => url === `${CHAT}/messages/stop`);
+    const stop = stopCalls()[0];
     expect(stop?.[1]?.keepalive).toBe(true);
+    expect(JSON.parse(String(stop?.[1]?.body))).toEqual({ request_id: sentBody().request_id });
   });
 });
 

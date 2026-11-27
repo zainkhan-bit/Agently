@@ -17,7 +17,13 @@ Closing a run before it ends cancels it: no answer is stored, the record says `c
 
 `POST .../messages/stream` sends server-sent events: `message` (the stored message), `piece` (text, in order), then `done` (both stored messages) or `error` (a fixed code and text). Refusals before the call are ordinary error responses. Responses are `private, no-store, no-transform`, so no proxy compresses and holds back the pieces.
 
-`POST .../messages/stop` marks the running answer `cancelled` (code `stopped`). A running answer checks about once a second whether it was stopped, then closes the model call; its answer is never stored. Closing the connection is not enough on its own: the Next.js proxy keeps the connection to the backend open for 25 to 40 seconds after the browser closed it, so the page calls stop as well, also when it is left.
+`POST .../messages/stop` with `{"request_id": ...}` stops the answer to that one message, and to no other. It only records a request (`stop_requested_at`); the status stays `running` until the run has ended its model call and recorded `cancelled` (code `stopped`) itself. So the conversation stays busy, and the call keeps its slot, until the call has really ended. Stop then returns, or after at most 5 seconds; the page reloads the messages to show what was kept.
+
+The model call runs on its own thread. The run checks about once a second whether it was stopped, also while the model sends nothing, and then sets the call's `cancel` event: providers end a `next()` that is waiting for the model within about a second (Gemini checks every 0.25 s). A call that will not end keeps its slot and gives it back itself when it does. An answer that arrives complete after a stop is not stored either, and is reported as stopped.
+
+Closing the connection cancels the answer too, also when it closes before the first event was read: the response closes the run however it ends. That is not enough on its own: the Next.js proxy keeps the connection to the backend open for 25 to 40 seconds after the browser closed it, so the page calls stop as well, also when it is left.
+
+After a stop or a failure the page reloads the newest messages and says what the server kept: the answer (it was saved after all), the message without an answer (Retry is offered), or nothing (the text goes back into the box). A new message can be sent at once. A retry is always treated as a message the server may already have.
 
 ## Prompt
 

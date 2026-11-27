@@ -316,6 +316,7 @@ VALID_BODIES = (
     {"name": "Moved", "instructions": "x", "version": 2},
     {"version": 2},
     {"request_id": str(uuid.uuid4()), "content": "Hello"},
+    {"request_id": str(uuid.uuid4())},  # stopping an answer
 )
 
 
