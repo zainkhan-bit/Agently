@@ -7,6 +7,7 @@ like, so a new route cannot be missed. Workspace routes are then attacked by ano
 
 import re
 import uuid
+from urllib.parse import quote
 
 import pytest
 from fastapi import Depends
@@ -95,7 +96,7 @@ def _nested_swaps(object_swaps) -> list[tuple[str, str, str]]:
 NESTED_SWAPS = _nested_swaps(OBJECT_SWAPS)
 # What all members of a workspace share. Adding one here is a privacy decision: everything else
 # is private to one person, so teammates attack it too, whatever their role.
-SHARED = {"workspace_id", "user_id", "agent_id", "version_id"}
+SHARED = {"workspace_id", "user_id", "agent_id", "version_id", "source_id"}
 PRIVATE_MATRIX = [(verb, path) for verb, path in MATRIX if _parameters(path) - SHARED]
 GET_PATHS = [path for verb, path in MATRIX if verb == "GET"]
 
@@ -145,6 +146,12 @@ def test_matrix_covers_the_known_endpoints() -> None:
     assert set(PRIVATE_MATRIX) >= private
     assert set(NESTED_SWAPS) >= {
         (verb, path, name) for verb, path in private for name in ("agent_id", "conversation_id")
+    }
+    sources = f"{agent}/sources"
+    source = f"{sources}/{{source_id}}"
+    assert set(MATRIX) >= {("GET", sources), ("POST", sources), ("GET", source), ("DELETE", source)}
+    assert set(NESTED_SWAPS) >= {
+        (verb, source, name) for verb in ("GET", "DELETE") for name in ("agent_id", "source_id")
     }
 
 
@@ -288,10 +295,17 @@ def _agent(client, workspace_id: str, name: str) -> dict[str, str]:
     assert first["number"] == 1
     chat = client.post(f"{url}/conversations")
     assert chat.status_code == 201
+    source = client.post(
+        f"{url}/sources",
+        content=f"{name} knowledge".encode(),
+        headers={"Content-Type": "text/plain", "X-File-Name": quote(f"{name} notes.txt")},
+    )
+    assert source.status_code == 201, source.text
     return {
         "agent_id": response.json()["id"],
         "version_id": first["id"],
         "conversation_id": chat.json()["id"],
+        "source_id": source.json()["id"],
     }
 
 
@@ -334,6 +348,7 @@ def _assert_no_tenant_data(tenants, response) -> None:
         tenants.b_children["agent_id"],
         tenants.b_children["version_id"],
         tenants.b_children["conversation_id"],
+        tenants.b_children["source_id"],
         "B secret message",
     ):
         assert secret not in response.text
@@ -444,6 +459,7 @@ def test_reading_one_agent_shows_nothing_of_its_sibling(tenants, path) -> None:
             sibling["agent_id"],
             sibling["version_id"],
             sibling["conversation_id"],
+            sibling["source_id"],
         ):
             assert other not in response.text
 

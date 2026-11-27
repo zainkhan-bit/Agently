@@ -57,3 +57,6 @@ graphify-out/
 
 # Owner copy of the build guide (the .md is the tracked one)
 AGENT_BUILD_GUIDE.pdf
+
+# Knowledge files uploaded in development (private, never committed)
+backend/var/

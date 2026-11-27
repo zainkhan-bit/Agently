@@ -18,6 +18,7 @@ from app.core.text import NAME_MAX
 from app.modules.agents.models import ACTIVE, ARCHIVED, PAUSED, Agent, AgentVersion
 from app.modules.agents.schemas import AgentCreate
 from app.modules.identity.models import User
+from app.modules.knowledge import storage as knowledge_storage
 from app.modules.workspaces.models import Membership
 from app.modules.workspaces.service import (
     WorkspaceContext,
@@ -191,6 +192,7 @@ def change_status(
 def delete_agent(db: Session, context: WorkspaceContext, agent_id: uuid.UUID) -> None:
     """Delete permanently. The database cascades to everything the agent owns (ADR-0005)."""
     lock_owners_as_owner(db, context)
+    files = knowledge_storage.files_of(db, agent_id=agent_id)
     deleted = db.execute(
         delete(Agent)
         .where(Agent.id == agent_id, Agent.workspace_id == context.workspace.id)
@@ -199,6 +201,7 @@ def delete_agent(db: Session, context: WorkspaceContext, agent_id: uuid.UUID) ->
     if deleted.rowcount == 0:
         raise NotFoundError()
     db.commit()
+    knowledge_storage.remove(files)  # after the commit: a file can outlive its record, not reverse
 
 
 @dataclass(frozen=True)

@@ -28,6 +28,8 @@ MESSAGE_WORKSPACE = "message_workspace"
 CONVERSATION_CREATE = "conversation_create"
 GENERATION_USER = "generation_user"
 GENERATION_WORKSPACE = "generation_workspace"
+UPLOAD_USER = "upload_user"
+UPLOAD_WORKSPACE = "upload_workspace"
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,20 @@ def conversation_create_limits(user_id: uuid.UUID) -> list[Limit]:
     window = settings.conversation_create_window_minutes
     maximum = settings.conversation_create_limit
     return [_limit(CONVERSATION_CREATE, maximum, window, str(user_id))]
+
+
+def upload_limits(user_id: uuid.UUID, workspace_id: uuid.UUID) -> list[Limit]:
+    settings = get_settings()
+    window = settings.knowledge_upload_window_minutes
+    return [
+        _limit(UPLOAD_USER, settings.knowledge_upload_limit_per_user, window, str(user_id)),
+        _limit(
+            UPLOAD_WORKSPACE,
+            settings.knowledge_upload_limit_per_workspace,
+            window,
+            str(workspace_id),
+        ),
+    ]
 
 
 def message_limits(user_id: uuid.UUID, workspace_id: uuid.UUID) -> list[Limit]:
@@ -162,6 +178,7 @@ def _delete_expired(session: Session) -> None:
             settings.generation_window_minutes,
             settings.conversation_create_window_minutes,
             settings.message_send_window_minutes,
+            settings.knowledge_upload_window_minutes,
         )
     )
     session.execute(

@@ -23,6 +23,7 @@ PostgreSQL 16+ (developed on 18), SQLAlchemy 2.x models, Alembic migrations. Mod
 | `provider_spend` | What real provider calls cost (ADR-0006) | One row per call, in nano-dollars: the worst case until the call succeeds, then the real cost with its token counts, or zero for a call that was never sent or was refused unworked. Holds no text and names no person or workspace. Never cleaned up; deleting rows raises what may be spent. |
 | `conversations` | One person's private conversation with one agent | Composite foreign keys, both cascading: `(agent_id, workspace_id)` to the agent of that workspace and `(user_id, workspace_id)` to the person's membership. `message_count` is also the last sequence number. `updated_at` is the last message. |
 | `messages` | Private text | Unique `(conversation_id, sequence)`, which also serves "the last N". `role` is `user` or `assistant`. `agent_version` is set for assistant messages and only for them (check), and is an existing version of the same agent (composite foreign key, cascading). Never changed after it is written. `request_id` is set for what a person sent and unique per conversation. |
+| `knowledge_sources` | A file a workspace gave one of its agents (Slice 4.1) | Composite foreign key `(agent_id, workspace_id)` to the agent of that workspace, cascading. `uploaded_by` is set null when the account goes. Checks: `kind` (`pdf`, `docx`, `txt`, `md`), `status` (`pending`, `processing`, `ready`, `failed`), positive size, `storage_name` is 32 lowercase hex characters, `sha256` is 64. Unique `storage_name`, and unique `(agent_id, sha256)`. Holds no file content; the file is in private storage under `storage_name`. |
 | `executions` | One attempt to answer a message (`docs/AI_RUNTIME.md`) | Composite foreign keys, all cascading: conversation and agent, message, answer, and the agent's version. Checks: `succeeded` exactly when there is an answer, finished unless `running`. Partial unique indexes: one running row per conversation, one success per message. Holds no text; unknown tokens stay empty. |
 
 ## Agents
@@ -55,7 +56,13 @@ Deletion is a **hard delete**. Rows are removed immediately: there are no `delet
 
 There are no backups yet (Phase 6). Once there are, deleted rows stay in them until they expire.
 
-Later tables (memories, knowledge sources) will document their deletion behaviour here when they are added.
+- Deleting a **knowledge source** (any member) deletes its record, then its file after the commit. Deleting its **agent** or **workspace** collects the stored names under the same locks, deletes, commits, then removes the files. A failure there, or a crash between a file being written and its record being committed, can only leave a file without a record: `python -m scripts.sweep_knowledge_files` removes those once they are an hour old. It never touches a file that has a record.
+
+Later tables (memories) will document their deletion behaviour here when they are added.
+
+## Knowledge sources
+
+Sources are shared by the workspace's members, like agents (`docs/plans/2026-11-27-1720-feat-secure-upload-plan.md`). An upload locks like an agent write, then takes the workspace row `FOR NO KEY UPDATE` again, so uploads to one workspace take turns and the storage cap (200 MB per workspace, configurable) cannot be passed by two at once. Limits: 10 MB per file, 100 sources per agent, 30 uploads per person and 100 per workspace per hour.
 
 ## Migration workflow (from `backend/`)
 

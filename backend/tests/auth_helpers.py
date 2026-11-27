@@ -18,7 +18,7 @@ COOKIE = "agently_session"
 
 
 @pytest.fixture
-def configure(monkeypatch) -> Iterator[Callable[..., None]]:
+def configure(monkeypatch, tmp_path) -> Iterator[Callable[..., None]]:
     """Set auth settings for one test, independent of the developer's backend/.env."""
 
     def apply(**values: object) -> None:
@@ -65,6 +65,13 @@ def configure(monkeypatch) -> Iterator[Callable[..., None]]:
         generation_limit_per_user=10,
         generation_limit_per_workspace=30,
         generation_window_minutes=60,
+        knowledge_storage_dir=tmp_path / "knowledge",
+        knowledge_max_file_bytes=10_000_000,
+        knowledge_storage_limit_per_workspace_bytes=200_000_000,
+        knowledge_sources_per_agent=100,
+        knowledge_upload_limit_per_user=1000,
+        knowledge_upload_limit_per_workspace=1000,
+        knowledge_upload_window_minutes=60,
     )
     yield apply
     get_settings.cache_clear()

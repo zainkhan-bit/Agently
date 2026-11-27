@@ -77,6 +77,15 @@ class Settings(BaseSettings):
     write_lock_timeout_seconds: int = Field(default=5, gt=0, le=3600)
     write_idle_timeout_seconds: int = Field(default=30, gt=0, le=3600)
 
+    # Knowledge files. Empty = backend/var/knowledge. Never inside a folder that is served.
+    knowledge_storage_dir: str = ""
+    knowledge_max_file_bytes: int = Field(default=10_000_000, gt=0, le=100_000_000)
+    knowledge_storage_limit_per_workspace_bytes: int = Field(default=200_000_000, gt=0)
+    knowledge_sources_per_agent: int = Field(default=100, gt=0)
+    knowledge_upload_limit_per_user: int = Field(default=30, gt=0)
+    knowledge_upload_limit_per_workspace: int = Field(default=100, gt=0)
+    knowledge_upload_window_minutes: int = Field(default=60, gt=0)
+
     # None = no AI features. The mock is not an AI and never runs in production.
     model_provider: Literal["mock", "gemini"] | None = None
     mock_provider_scenario: Literal[

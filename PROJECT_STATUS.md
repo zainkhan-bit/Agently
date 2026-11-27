@@ -1,7 +1,7 @@
 # Project Status — Agently
 
 **Current milestone:** Phase 3 is done (exit gate passed 2026-11-27); Phase 4 starts
-**Next smallest task:** Slice 4.1 — secure upload and source records
+**Next smallest task:** Slice 4.2 — asynchronous document processing
 
 ## Must fix before any deployment
 
@@ -569,3 +569,32 @@ Checked 2026-11-27, after Slice 3.4 and its review fixes. **The gate passes loca
 - **Commit / push:** `fix(chat)` commit on `slice-3.4`, merged into `main` and pushed. Branches `slice-3.1` and `slice-3.4` deleted.
 - **Also added:** `backend/scripts/chat_check.py`, the Phase 3 real-provider check (used in the next step).
 - **Next smallest task:** the Phase 3 exit gate, then Slice 4.1
+
+### Slice 4.1 — Secure upload and source records
+- **Date:** 2026-11-27 (owner away; worked autonomously, decisions below are assumptions)
+- **What changed:** Members upload PDF, DOCX, TXT and Markdown files to an agent (`POST .../agents/<id>/sources`, the file as the raw body, its name percent-encoded in `X-File-Name`), list them, read one's status, and delete them. The type is decided by the content; the extension and declared type must agree. SVG and HTML are refused by name, declared type and content; PDFs naming `/JavaScript`, `/JS` or `/Launch`, DOCX with macros, encrypted entries, too many entries or bomb ratios are refused. 10 MB per file (checked before and while reading), 200 MB per workspace (under the workspace lock), 100 sources per agent, the same content once per agent, 30 uploads per person and 100 per workspace per hour. Files are stored under 32 random hex characters in `backend/var/knowledge` (ignored by git; any other folder inside the repository is refused), created exclusively with mode 0600. No route returns a file. Deleting a source, its agent or its workspace removes the files; `scripts.sweep_knowledge_files` removes files without a record that are over an hour old. File names and contents are never logged. Migration `0009`.
+- **Assumptions (owner away):** sources are shared by the workspace like agents (any member uploads, lists, deletes); the raw body instead of multipart, so the body is counted while read; no download route; archived agents take no files, paused ones do; no interface yet (the guide puts "inspect and remove knowledge sources" in Slice 4.4); status values for 4.2 fixed now.
+- **Plan:** `docs/plans/2026-11-27-1720-feat-secure-upload-plan.md`
+- **Files/modules affected:** `backend/app/modules/knowledge/`, `backend/app/modules/{agents,workspaces,identity}/service.py` and `throttle.py`, `backend/app/core/config.py`, `backend/app/main.py`, `backend/migrations/versions/0009_knowledge_sources.py`, `backend/scripts/sweep_knowledge_files.py`, `backend/tests/`, `.gitignore`, `.gstack/pregate.json`, `backend/.env.example`, `docs/DATABASE_DESIGN.md`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (1645, in 6 batches via `/verify`) | `backend: .venv\Scripts\python -m pytest`, in chunks | No skips |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Migration on dev DB | PASS | `alembic upgrade head`, `check`, `downgrade -1`, `upgrade head`, `check` | `0009` |
+| Isolation matrix | PASS (423) | `test_tenant_isolation.py`, `test_route_inventory.py` | Every source route, with a real source of the other tenant and of a sibling agent |
+| Test sensitivity | 39 of 39 caught | one guard at a time, one test file per process, in a copy | |
+| Frontend | unchanged | | |
+
+- **Review:** one independent Claude reviewer, reading only. No P0. Fixed: P1, an upload held a pooled database connection idle in a transaction while its body arrived (15 slow uploads would have blocked every request); P2, file names reached uvicorn's access log through the query string (now a header). Fixed P3s: a test that never reached the code it named, no test over the app-wide 64 KB body limit, a corrupt DOCX entry gave 500, the storage-folder guard allowed most of the repository (a public one), `/JS` followed by a line break passed. Recorded P3s below.
+- **`/verify`:** `READY_FOR_SHIP tree=1a67b34b6427 checks=tests not_covered=none` (1,018 s). The first run failed one test, which lists every table and did not know the new one; fixed and run again.
+- **Known limitations:**
+  - P3, recorded: body chunks are written to disk on the event loop (bounded, small writes).
+  - P3, recorded: a commit that fails after the server committed it would leave a record whose file was removed (rare; needs a connection loss during COMMIT).
+  - P3, recorded: the DOCX limits trust the sizes the archive declares. Slice 4.2 must count the bytes it really unpacks.
+  - The PDF script check is a heuristic: compressed objects or escaped names can hide a script. No stored file is ever served, so it cannot run here.
+  - The storage cap counts stored files only, not their later chunks and vectors.
+  - Orphan files are removed by a script, not on a schedule (the Slice 4.2 worker can run it).
+- **Commit / push:** `feat(knowledge)` commit, merged into `main` and pushed; branch `slice-4.1` deleted.
+- **Next smallest task:** Slice 4.2 — asynchronous document processing

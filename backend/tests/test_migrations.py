@@ -27,6 +27,7 @@ APP_TABLES = {
     "conversations",
     "messages",
     "executions",
+    "knowledge_sources",
 }
 
 

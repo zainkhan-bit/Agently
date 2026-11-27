@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.database import limit_write_time
 from app.core.errors import ConflictError, NotFoundError, PermissionDeniedError
 from app.modules.identity.models import User
+from app.modules.knowledge import storage as knowledge_storage
 from app.modules.workspaces.models import Membership, Workspace
 
 MAX_OWNED_WORKSPACES = 20
@@ -83,8 +84,10 @@ def rename_workspace(db: Session, context: WorkspaceContext, name: str) -> Works
 def delete_workspace(db: Session, context: WorkspaceContext) -> None:
     """Delete permanently. The database cascades to everything in the workspace."""
     lock_owners_as_owner(db, context)
+    files = knowledge_storage.files_of(db, workspace_id=context.workspace.id)
     db.execute(delete(Workspace).where(Workspace.id == context.workspace.id))
     db.commit()
+    knowledge_storage.remove(files)  # after the commit: a file can outlive its record, not reverse
 
 
 def list_members(
