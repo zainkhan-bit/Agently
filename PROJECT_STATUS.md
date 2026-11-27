@@ -1,7 +1,7 @@
 # Project Status — Agently
 
-**Current milestone:** Phase 3: Slices 3.1 to 3.4 are done; 3.3 and 3.4 are proven with the mock only
-**Next smallest task:** the Phase 3 exit gate (waiting for the owner)
+**Current milestone:** Phase 3 is done (exit gate passed 2026-11-27); Phase 4 starts
+**Next smallest task:** Slice 4.1 — secure upload and source records
 
 ## Must fix before any deployment
 
@@ -31,7 +31,7 @@ Agreed with the owner on 2026-11-24. Built in Slice 3.1:
 - ~~Slice 1.1 blocked on local PostgreSQL credentials~~ — resolved 2026-11-21: `GET /api/health/ready` returns `database: ok`.
 - **Known gap (owner: the slice that adds account deletion):** it must refuse to delete a workspace's last owner, or transfer or delete the workspace first, with tests. Slice 1.3 enforces this for leaving, removal and demotion; account deletion does not exist in the app yet. Lock order and edge cases: `docs/DATABASE_DESIGN.md`.
 - The real-provider tests of Slices 2.3 and 3.1 passed on 2026-11-25.
-- **Slice 3.3, BLOCKED:** the runtime check with the real provider (one conversation, a retry, a cancelled answer). Needs the owner's yes.
+- ~~Slice 3.3, BLOCKED: the runtime check with the real provider~~: done on 2026-11-27 with the owner's pre-approval (at most 6 calls; 4 used). See the Phase 3 exit gate.
 - ~~Slice 3.2, BLOCKED: breaking one guard at a time~~: rerun on 2026-11-27 with the owner's yes, one test file per process. See the Slice 3.4 review fixes.
 
 ## Phase 1 exit gate
@@ -92,6 +92,33 @@ The build guide words the gate further (Slice 2.4):
 - AGT-3 "paused agents cannot run": the rule and its test exist (`test_only_active_agents_may_run`), but nothing runs agents until Phase 3.
 - The member view of agents and versions is checked by API and component tests, not in a browser: nobody can be invited yet.
 - Everything under "Before enabling a real provider key" and "Must fix before any deployment".
+
+## Phase 3 exit gate
+
+Checked 2026-11-27, after Slice 3.4 and its review fixes. **The gate passes locally, with one real Gemini conversation (4 calls).** There is no CI yet, so nothing re-runs these automatically. The numbers in brackets are browser checks.
+
+| Gate (`AGENT_BUILD_GUIDE.md`) | Result | Proof |
+|---|---|---|
+| Chat with your own configured agent | PASS | `backend/tests/test_runtime.py`: `test_the_provider_gets_the_agents_prompt_the_history_and_the_limits`, `test_an_edit_during_the_call_does_not_change_the_recorded_version`; `frontend/src/features/chat/chat.test.tsx`; `docs/manual-checks/chat-browser-check.js` (48) |
+| Real model responses | PASS on 2026-11-27 | `backend/scripts/chat_check.py` against a temporary server with `MODEL_PROVIDER=gemini` for that process only: two turns (the second remembered the first), a stopped answer (not stored, reported as stopped), its retry (stored once), a repeat without a call. 16 of 16 checks, 4 calls, $0.000679 at the configured prices (free tier: nothing billed). Server log: one warning (`answer not stored (stopped)`), no key, no message text |
+| Revisit conversation history | PASS | `backend/tests/test_conversations.py`: `test_history_is_paged_backwards_and_each_page_is_in_order`, `test_the_list_is_paged_with_the_newest_activity_first`; refresh and reload parts of `chat-browser-check.js` |
+| Only your own conversations | PASS | `backend/tests/test_tenant_isolation.py` (every conversation route, owners and members of the same workspace included); `test_conversations.py`: `test_storing_needs_the_creator_the_agent_and_the_membership`; privacy part of `chat-browser-check.js` |
+| Provider credentials protected | PASS | `backend/tests/test_gemini.py`: `test_the_key_is_only_in_its_header`, `test_the_environment_cannot_redirect_the_key`; the key is only in `backend/.env` (ignored by git) and was never printed |
+| Runtime limits exist | PASS | `test_runtime.py`: `test_user_and_workspace_limits`, `test_default_limits`, `test_parallel_calls_are_capped_and_slots_come_back`, `test_repeated_stop_and_retry_never_hold_more_than_one_slot_per_conversation`; `test_spending.py` (server-wide spending limit); `test_gemini.py`: `test_the_deadline_is_hard`, `test_the_number_of_workers_is_limited` |
+| Paused agents cannot run (AGT-3, open since Phase 2) | PASS | `test_runtime.py`: `test_stopped_agents_do_not_run`; paused part of `chat-browser-check.js` |
+| Version recorded on each answer (AGT-4, open since Phase 2) | PASS | `executions.agent_version` and `messages.agent_version`; `test_an_edit_during_the_call_does_not_change_the_recorded_version` |
+
+**Proven on the mock only**
+
+- Timeouts, rate limits, refusals and outages in chat: simulated, never a real provider failure.
+- How a real model resists prompt injection: untested (agents have no tools, so a misled answer can only be misleading text).
+- Long answers and the 4,000-token output limit with a real model.
+
+**Still open**
+
+- Markdown is not rendered: answers are plain text (a recorded Slice 3.4 decision).
+- Everything under "Must fix before any deployment". The free tier stays local only (ADR-0006).
+- No screen for removing members, so no warning there yet (see "Must do before Slice 3.4 ships").
 
 ## Slice log
 
@@ -531,7 +558,7 @@ The build guide words the gate further (Slice 2.4):
 | Browser checks, production build, mock (`slow`) | PASS (48 + 116 + 54 + 99 + 22 + 15 + 59) | `docs/manual-checks/` | chat (2 new checks: Retry at once after a stop, a new message right after a stop), agents, builder, dashboard, auth, workspace, versions. Auth needs uvicorn's `--no-proxy-headers` |
 | Test sensitivity, this fix | backend 17 of 18, frontend 8 of 9 | broke guards one at a time, backend in a copy | Backend: freeing the slot before settling was missed, a test was strengthened and now catches it; Gemini's worker check of the caller's cancel was redundant and was removed. Frontend: the survivor adds a `pending` check that is redundant once pending is cleared |
 | Test sensitivity, Slice 3.2 (rerun) | 32 of 36 | one guard at a time, one test file per process, in a copy | First 31: a database check against a negative message count had no test; added. Survivors: the workspace clause of the creator filter and the delete's own 404 are redundant (the agent is the workspace's; the route's dependency 404s first); `updated_at` is also set by the ORM; the stale-count guard (`populate_existing`) needs a two-connection race test, not written |
-| Real provider | BLOCKED | | Mock only. No Gemini call was made |
+| Real provider | PASS, after the merge | `backend/scripts/chat_check.py` | See the Phase 3 exit gate: 4 calls |
 
 - **`/verify`:** `READY_FOR_SHIP tree=d4de833b862d checks=tests not_covered=none` (829 s, `--timeout 2400`). For this, `scripts/run_tests.py` now runs backend files 6 at a time, one pytest process after another (the whole suite in one process needs more memory than is free); a test covers it. The default 600 s limit is too short for the batched suite.
 - **Known limitations:**
@@ -541,4 +568,4 @@ The build guide words the gate further (Slice 2.4):
   - P3, open: no test for the stale message count that `populate_existing` prevents (Slice 3.2).
 - **Commit / push:** `fix(chat)` commit on `slice-3.4`, merged into `main` and pushed. Branches `slice-3.1` and `slice-3.4` deleted.
 - **Also added:** `backend/scripts/chat_check.py`, the Phase 3 real-provider check (used in the next step).
-- **Next smallest task:** the Phase 3 exit gate (waiting for the owner)
+- **Next smallest task:** the Phase 3 exit gate, then Slice 4.1
