@@ -20,6 +20,8 @@ from app.core.config import get_settings
 from app.core.errors import ConflictError, NotFoundError
 from app.modules.agents.models import ARCHIVED
 from app.modules.agents.service import AgentArchivedError, lock_agent
+from app.modules.jobs import service as jobs
+from app.modules.jobs.models import PROCESS_SOURCE
 from app.modules.knowledge import filetypes, storage
 from app.modules.knowledge.models import PENDING, KnowledgeSource
 from app.modules.workspaces.models import Workspace
@@ -133,6 +135,8 @@ def _record(
     except IntegrityError:
         db.rollback()
         raise SourceDuplicateError() from None
+    # In the same transaction: a kept source always has its job. The worker does the rest.
+    jobs.enqueue(db, PROCESS_SOURCE, source.id)
     return source
 
 

@@ -31,7 +31,11 @@ def docx(extra: dict[str, bytes] | None = None, *, types: bytes = b"<Types/>") -
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("[Content_Types].xml", types)
-        archive.writestr("word/document.xml", "<w:document>Petal &amp; Pine</w:document>")
+        archive.writestr(
+            "word/document.xml",
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            "<w:body><w:p><w:r><w:t>Petal &amp; Pine</w:t></w:r></w:p></w:body></w:document>",
+        )
         for name, data in (extra or {}).items():
             archive.writestr(name, data)
     return buffer.getvalue()
@@ -75,8 +79,9 @@ def test_supported_files_are_kept_privately(c, db_session, body, name, content_t
     )
     assert set(out) == {
         "id", "agent_id", "name", "kind", "size_bytes", "status", "error_code",
-        "created_at", "updated_at",
+        "error_message", "created_at", "updated_at",
     }  # fmt: skip
+    assert out["error_message"] is None
     record = db_session.scalars(select(KnowledgeSource)).one()
     assert storage.NAME.fullmatch(record.storage_name)
     assert name not in record.storage_name

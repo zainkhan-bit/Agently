@@ -11,7 +11,10 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     String,
+    Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -49,6 +52,8 @@ class KnowledgeSource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Index("ix_knowledge_sources_workspace_id", "workspace_id"),
         Index("uq_knowledge_sources_agent_id_sha256", "agent_id", "sha256", unique=True),
         Index("uq_knowledge_sources_storage_name", "storage_name", unique=True),
+        # For the chunks' foreign key: a chunk names the workspace and agent of its own source.
+        UniqueConstraint("id", "agent_id", "workspace_id"),
     )
 
     workspace_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
@@ -65,3 +70,33 @@ class KnowledgeSource(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     storage_name: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(50))  # from our own errors only
+
+
+class KnowledgeChunk(UUIDPrimaryKeyMixin, Base):
+    """A piece of a source's text. Private: never logged. Deleted with its source."""
+
+    __tablename__ = "knowledge_chunks"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["source_id", "agent_id", "workspace_id"],
+            [
+                "knowledge_sources.id",
+                "knowledge_sources.agent_id",
+                "knowledge_sources.workspace_id",
+            ],
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("source_id", "sequence"),
+        CheckConstraint("sequence >= 0", name="sequence_not_negative"),
+        CheckConstraint("page IS NULL OR page >= 1", name="page_positive"),
+        CheckConstraint("content <> ''", name="content_not_empty"),
+        Index("ix_knowledge_chunks_agent_id", "agent_id"),
+    )
+
+    source_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    # Copies of the source's, kept equal by the foreign key, so that retrieval can filter here.
+    workspace_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    agent_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    page: Mapped[int | None] = mapped_column(Integer)  # PDFs only
+    content: Mapped[str] = mapped_column(Text, nullable=False)

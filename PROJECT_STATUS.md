@@ -1,7 +1,7 @@
 # Project Status — Agently
 
-**Current milestone:** Phase 3 is done (exit gate passed 2026-11-27); Phase 4 starts
-**Next smallest task:** Slice 4.2 — asynchronous document processing
+**Current milestone:** Phase 4: Slice 4.1 is done; Slice 4.2 is built but not yet verified (local branch); Slice 4.3 is blocked
+**Next smallest task:** verify Slice 4.2 (`/verify`, guard check) and merge it; Slice 4.3 is BLOCKED on pgvector (see below)
 
 ## Must fix before any deployment
 
@@ -33,6 +33,22 @@ Agreed with the owner on 2026-11-24. Built in Slice 3.1:
 - The real-provider tests of Slices 2.3 and 3.1 passed on 2026-11-25.
 - ~~Slice 3.3, BLOCKED: the runtime check with the real provider~~: done on 2026-11-27 with the owner's pre-approval (at most 6 calls; 4 used). See the Phase 3 exit gate.
 - ~~Slice 3.2, BLOCKED: breaking one guard at a time~~: rerun on 2026-11-27 with the owner's yes, one test file per process. See the Slice 3.4 review fixes.
+
+- **Slice 4.3, BLOCKED (owner, needs admin rights):** the pgvector extension is not available on the local PostgreSQL 18.6: `SELECT * FROM pg_available_extensions WHERE name='vector'` returned no row (2026-11-27). Installing it needs administrator rights and the Visual Studio C++ build tools, so nothing was attempted. Steps (pgvector's own Windows instructions):
+  1. Install "Desktop development with C++" from the Visual Studio Build Tools, if it is not there.
+  2. Open "x64 Native Tools Command Prompt for VS" **as Administrator** and run:
+     ```
+     set "PGROOT=C:\Program Files\PostgreSQL\18"
+     cd %TEMP%
+     git clone --branch v0.8.1 https://github.com/pgvector/pgvector.git
+     cd pgvector
+     nmake /F Makefile.win
+     nmake /F Makefile.win install
+     ```
+     Use the newest release tag on github.com/pgvector/pgvector if it is newer than v0.8.1, and adjust `PGROOT` if PostgreSQL is installed elsewhere.
+  3. As the `postgres` superuser, enable it where the app and its tests need it: `psql -U postgres -d agently -c "CREATE EXTENSION IF NOT EXISTS vector;"` and `psql -U postgres -d template1 -c "CREATE EXTENSION IF NOT EXISTS vector;"` (the test databases are created from `template1`).
+  4. Check: `SELECT * FROM pg_available_extensions WHERE name='vector'` returns one row. Then Slice 4.3 can start, with a mock embedding provider.
+- **Slice 4.2, needs a run when memory allows:** the guard check was stopped, and the full suite and `/verify` were not started, because the machine ran critically low on memory (2026-11-27). The slice is committed on local branch `slice-4.2`.
 
 ## Phase 1 exit gate
 
@@ -598,3 +614,31 @@ Checked 2026-11-27, after Slice 3.4 and its review fixes. **The gate passes loca
   - Orphan files are removed by a script, not on a schedule (the Slice 4.2 worker can run it).
 - **Commit / push:** `feat(knowledge)` commit, merged into `main` and pushed; branch `slice-4.1` deleted.
 - **Next smallest task:** Slice 4.2 — asynchronous document processing
+
+### Slice 4.2 — Asynchronous document processing (local branch `slice-4.2`, committed, NOT verified, NOT pushed)
+- **Date:** 2026-11-27 (owner away; decisions below are assumptions)
+- **What changed:** An upload now enqueues a job in the same transaction (`jobs` table, ADR-0004). A separate worker (`python -m app.worker`) claims one job at a time with `FOR UPDATE SKIP LOCKED`, takes over jobs whose worker died once their lease ends, and turns the source into chunks of about 1,200 characters with 200 of overlap (`knowledge_chunks`), with page numbers for PDFs. Extraction runs in a child process with a 60 s timeout and a 512 MB memory cap: PDF with pypdf 7.2.0, DOCX streamed through expat with every DTD refused and the really unpacked bytes counted, TXT and Markdown as stored. Limits: 500 pages, 2,000,000 characters, 20 MB of DOCX XML. Statuses `pending` → `processing` → `ready` or `failed` with a fixed code and text (`text_empty` says that scans need text recognition, which does not exist). Failures that may pass are retried after 30 s and 2 min, at most 3 attempts; failures in the document are not. Re-running replaces a source's chunks; a source deleted meanwhile stays deleted. The worker also sweeps orphan files every 10 minutes. No document text in logs: the child's stderr is never read and log lines carry ids and codes. Migration `0010` also queues sources uploaded before it.
+- **Assumptions (owner away):** pypdf for PDFs (pure Python, maintained, no dependencies); one child process per document; the worker is started by hand next to the API in development; no "reprocess" action (delete and upload again); chunk size 1,200/200.
+- **Plan:** `docs/plans/2026-11-27-1900-feat-document-processing-plan.md`
+- **Files/modules affected:** `backend/app/modules/jobs/`, `backend/app/modules/knowledge/{extract,chunking,processing,models,schemas,service}.py`, `backend/app/worker.py`, `backend/app/models.py`, `backend/migrations/versions/0010_jobs_and_knowledge_chunks.py`, `backend/requirements.txt`, `backend/constraints.txt`, `backend/tests/`, `.gstack/pregate.json`, `README.md`, `docs/DATABASE_DESIGN.md`, `docs/decisions/ADR-0004-background-jobs.md`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PARTIAL | the files this slice touches | `test_processing.py` 36, `test_knowledge.py` 65, `test_migrations.py` 3, `test_run_tests_script.py` 9: all pass. The full suite was NOT run (see below) |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Migration on dev DB | PASS | `alembic upgrade head`, `check`, `downgrade -1`, `upgrade head`, `check` | `0010` |
+| End to end, mock, dev DB | PASS | upload through the API, then the real worker process | A two-page PDF and a TXT became ready, a PDF without a text layer failed as `text_empty`; the worker log held no document text. It first found that the worker process could not resolve foreign keys (fixed) |
+| Test sensitivity | INCOMPLETE: 3 of 3 caught, 22 not run | one guard at a time, one test file per process, in a copy | Stopped by Claude Code because the machine ran critically low on memory; not restarted, as instructed. Guard list: 25 |
+| Frontend | unchanged | | |
+
+- **Review:** one independent Claude reviewer, reading only. No P0. Fixed: P1 (a source whose attempts all died stayed "processing"), three P2s (UTF-16 passed the DTD byte check, a failing sweep killed the worker, no memory cap on the child) and five P3s. See the plan.
+- **`/verify`:** NOT RUN, for the same reason. **Before merging:** run `/verify` (`gstack-checks run --timeout 2400`, which runs the whole backend suite 6 files per process) and the guard check, when memory allows.
+- **Known limitations:**
+  - The Windows memory cap is a watchdog thread that checks every 50 ms; a parser holding the interpreter lock for longer can overshoot it. POSIX uses `RLIMIT_AS`.
+  - The PDF page tree is read by pypdf before the page limit applies; the time and memory caps bound that.
+  - No OCR: scanned PDFs fail as `text_empty`.
+  - Jobs are kept forever (small rows, no content); a cleanup comes when there are many.
+  - No interface yet: statuses and reasons are in the API (`status`, `error_code`, `error_message`).
+- **Commit / push:** committed on local branch `slice-4.2` only. Not merged and not pushed: the build guide requires the full suite and `/verify` first.
+- **Next smallest task:** verify and merge this slice; Slice 4.3 is BLOCKED on pgvector

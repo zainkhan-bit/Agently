@@ -22,6 +22,7 @@
       "backend/tests/test_migrations.py",
       "backend/tests/test_origin_guard.py",
       "backend/tests/test_private_text_logging.py",
+      "backend/tests/test_processing.py",
       "backend/tests/test_providers.py",
       "backend/tests/test_route_inventory.py",
       "backend/tests/test_run_lock.py",

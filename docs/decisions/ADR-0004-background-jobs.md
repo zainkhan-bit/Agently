@@ -1,6 +1,6 @@
 # ADR-0004: PostgreSQL-backed background jobs
 
-- **Status:** Accepted (implemented in Phase 4)
+- **Status:** Accepted; implemented in Slice 4.2 (2026-11-27): `backend/app/modules/jobs/`, `backend/app/worker.py`
 - **Date:** 2026-11-20
 
 ## Context

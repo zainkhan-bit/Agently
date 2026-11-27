@@ -28,6 +28,8 @@ APP_TABLES = {
     "messages",
     "executions",
     "knowledge_sources",
+    "knowledge_chunks",
+    "jobs",
 }
 
 
