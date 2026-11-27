@@ -213,6 +213,32 @@ def test_the_real_unpacked_size_is_counted(tmp_path, monkeypatch) -> None:
     assert caught.value.code in ("text_too_long", "text_unreadable")
 
 
+def test_an_honest_but_large_body_is_stopped_while_unpacking(tmp_path, monkeypatch) -> None:
+    body = io.BytesIO()
+    text = "r" * 5000
+    xml = (
+        f"<w:document {W_NS}><w:body><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:body></w:document>"
+    )
+    with zipfile.ZipFile(body, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("word/document.xml", xml)
+    path = tmp_path / "x"
+    path.write_bytes(body.getvalue())
+    monkeypatch.setattr(extract, "MAX_DOCX_XML_BYTES", 1000)
+    with pytest.raises(extract.ExtractionError) as caught:
+        extract.extract(path, "docx")
+    assert caught.value.code == "text_too_long"
+
+
+@pytest.mark.parametrize(("kind", "body"), [("txt", b"  \n\t "), ("md", b"\xef\xbb\xbf\n\n")])
+def test_text_without_words_is_empty(tmp_path, kind, body) -> None:
+    path = tmp_path / "x"
+    path.write_bytes(body)
+    with pytest.raises(extract.ExtractionError) as caught:
+        extract.extract(path, kind)
+    assert caught.value.code == "text_empty"
+
+
 def test_page_and_length_limits(tmp_path, monkeypatch) -> None:
     path = tmp_path / "x"
     path.write_bytes(pdf("one", "two", "three"))
@@ -303,6 +329,10 @@ def test_enqueueing_twice_makes_one_job_and_running_twice_one_set_of_chunks(c, d
     run(db_session)
     assert [chunk.content for chunk in chunks(db_session)] == first
     assert count(db_session, Job) == 2
+    db_session.expire_all()
+    statuses = sorted(job.status for job in db_session.scalars(select(Job)))
+    assert statuses == ["succeeded", "succeeded"]  # the second run replaced, it did not crash
+    assert source(db_session).status == "ready"
 
 
 def test_a_source_deleted_during_processing_stays_deleted(c, db_session, monkeypatch) -> None:
