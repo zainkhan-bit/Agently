@@ -8,6 +8,7 @@ import uuid
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Computed,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -91,6 +93,8 @@ class KnowledgeChunk(UUIDPrimaryKeyMixin, Base):
         CheckConstraint("page IS NULL OR page >= 1", name="page_positive"),
         CheckConstraint("content <> ''", name="content_not_empty"),
         Index("ix_knowledge_chunks_agent_id", "agent_id"),
+        Index("ix_knowledge_chunks_search_english", "search_english", postgresql_using="gin"),
+        Index("ix_knowledge_chunks_search_simple", "search_simple", postgresql_using="gin"),
     )
 
     source_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
@@ -100,3 +104,11 @@ class KnowledgeChunk(UUIDPrimaryKeyMixin, Base):
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     page: Mapped[int | None] = mapped_column(Integer)  # PDFs only
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    # Search forms of the text, kept by PostgreSQL itself: stemmed English, and exact words for
+    # everything English stemming does not know (Roman Urdu, names, codes).
+    search_english: Mapped[str] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('english'::regconfig, content)", persisted=True)
+    )
+    search_simple: Mapped[str] = mapped_column(
+        TSVECTOR, Computed("to_tsvector('simple'::regconfig, content)", persisted=True)
+    )
