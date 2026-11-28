@@ -1,7 +1,7 @@
 # Project Status — Agently
 
-**Current milestone:** Phase 4: Slices 4.1 and 4.2 are done; Slice 4.3 is blocked on pgvector
-**Next smallest task:** Slice 4.3 — embeddings and vector retrieval, once the owner has installed pgvector (BLOCKED, see below)
+**Current milestone:** Phase 4: Slices 4.1 to 4.3 are done; Slice 4.3 uses PostgreSQL full-text search until pgvector is installed (ADR-0007)
+**Next smallest task:** Slice 4.4 — retrieval in the agent runtime
 
 ## Must fix before any deployment
 
@@ -9,6 +9,7 @@
 - Gemini (ADR-0006): the paid tier (production refuses free), a monthly spend cap set in AI Studio first, nobody under 18, and no users in the EEA, UK or Switzerland on the free tier.
 
 - PostgreSQL's own log may record rows that a constraint refuses, message text included. Set `log_error_verbosity = terse` on the production server (review of Slice 3.2).
+- Switch to pgvector on the production database (ADR-0007): install the extension, add embeddings and the embedding retriever behind `get_retriever()`, and build the deferred Slice 4.3 items (model, version and dimensions recorded; dimension test; missing-credentials status). Run migration `0011` in a quiet window: it rewrites `knowledge_chunks` once.
 
 ## Must do before Slice 3.4 ships
 
@@ -34,7 +35,7 @@ Agreed with the owner on 2026-11-24. Built in Slice 3.1:
 - ~~Slice 3.3, BLOCKED: the runtime check with the real provider~~: done on 2026-11-27 with the owner's pre-approval (at most 6 calls; 4 used). See the Phase 3 exit gate.
 - ~~Slice 3.2, BLOCKED: breaking one guard at a time~~: rerun on 2026-11-27 with the owner's yes, one test file per process. See the Slice 3.4 review fixes.
 
-- **Slice 4.3, BLOCKED (owner, needs admin rights):** the pgvector extension is not available on the local PostgreSQL 18.6: `SELECT * FROM pg_available_extensions WHERE name='vector'` returned no row (2026-11-27). Installing it needs administrator rights and the Visual Studio C++ build tools, so nothing was attempted. Steps (pgvector's own Windows instructions):
+- ~~Slice 4.3, BLOCKED on pgvector~~: resolved 2026-11-28 by the owner's decision to build retrieval with PostgreSQL full-text search behind a replaceable interface (ADR-0007). pgvector is still needed before deployment ("Must fix before any deployment"). It is not available on the local PostgreSQL 18.6 (`pg_available_extensions` has no `vector` row) and needs administrator rights and the Visual Studio C++ build tools. Install steps for the switch (pgvector's own Windows instructions):
   1. Install "Desktop development with C++" from the Visual Studio Build Tools, if it is not there.
   2. Open "x64 Native Tools Command Prompt for VS" **as Administrator** and run:
      ```
@@ -47,7 +48,7 @@ Agreed with the owner on 2026-11-24. Built in Slice 3.1:
      ```
      Use the newest release tag on github.com/pgvector/pgvector if it is newer than v0.8.1, and adjust `PGROOT` if PostgreSQL is installed elsewhere.
   3. As the `postgres` superuser, enable it where the app and its tests need it: `psql -U postgres -d agently -c "CREATE EXTENSION IF NOT EXISTS vector;"` and `psql -U postgres -d template1 -c "CREATE EXTENSION IF NOT EXISTS vector;"` (the test databases are created from `template1`).
-  4. Check: `SELECT * FROM pg_available_extensions WHERE name='vector'` returns one row. Then Slice 4.3 can start, with a mock embedding provider.
+  4. Check: `SELECT * FROM pg_available_extensions WHERE name='vector'` returns one row. Then the embedding retriever can be built, with a mock embedding provider.
 - ~~Slice 4.2, needs a run when memory allows~~: done on 2026-11-28 with the owner's go-ahead; merged.
 
 ## Phase 1 exit gate
@@ -642,3 +643,30 @@ Checked 2026-11-27, after Slice 3.4 and its review fixes. **The gate passes loca
   - No interface yet: statuses and reasons are in the API (`status`, `error_code`, `error_message`).
 - **Commit / push:** `feat(knowledge)` commit plus a `test(knowledge)` commit, merged into `main` and pushed; branch `slice-4.2` deleted.
 - **Next smallest task:** Slice 4.3, once pgvector is installed (BLOCKED)
+
+### Slice 4.3 — Knowledge retrieval (full-text search, ADR-0007)
+- **Date:** 2026-11-28
+- **What changed:** Retrieval sits behind one interface (`get_retriever()`, `Excerpt`): ranked excerpts with source id, source name, page and position, and no score, so an embedding implementation can replace it later without changing callers. The first implementation is PostgreSQL full-text search. Migration `0011` adds two generated, stored `tsvector` columns to `knowledge_chunks` (stemmed English and exact words), each with a GIN index; existing chunks were filled by the migration and the worker did not change. Every word must match first; if that gives too few results, any of the same words fills the rest, ranked below. English stop words are left out of the exact-word query, so "the and of" finds nothing, and Roman Urdu words match exactly. Only plain word tokens (Unicode letters, marks and digits, NFC) reach `plainto_tsquery` / `websearch_to_tsquery`. Every query filters on workspace, agent and source status `ready`. New endpoint `POST /api/workspaces/{id}/agents/{id}/knowledge/search` (members; JSON body so the question is never in a URL): questions up to 500 characters, at most 10 results (5 by default), excerpts up to 1,500 characters, 60 searches per person per 10 minutes, all configurable. Questions and excerpts are never logged.
+- **Decisions (owner, 2026-11-28):** full-text search now instead of installing pgvector locally (ADR-0007, deviation from ADR-0002); a members-only endpoint; order instead of a score; all words then any word; English plus exact-word matching for Roman Urdu; the embedding items of the guide move to the pgvector switch.
+- **Plan:** `docs/plans/2026-11-28-0743-feat-knowledge-retrieval-plan.md` (document review by five reviewers: 10 findings, all fixed in the plan, including that PostgreSQL's `simple` configuration keeps stop words)
+- **Files/modules affected:** `backend/app/modules/knowledge/{retrieval,models,router,schemas}.py`, `backend/app/modules/identity/throttle.py`, `backend/app/core/config.py`, `backend/app/main.py`, `backend/migrations/versions/0011_knowledge_chunk_search.py`, `backend/.env.example`, `backend/tests/` (`test_retrieval.py`, `test_knowledge_search.py`, and additions to `test_migrations.py`, `test_private_text_logging.py`, `test_tenant_isolation.py`, `auth_helpers.py`), `.gstack/pregate.json`, `README.md`, `docs/decisions/ADR-0007-full-text-retrieval-before-pgvector.md`, `docs/DATABASE_DESIGN.md`, `docs/SYSTEM_ARCHITECTURE.md`
+- **Tests run / results:**
+
+| Check | Result | Command | Notes |
+|---|---|---|---|
+| Backend tests with real DB | PASS (1748, in 7 batches via `/verify`) | `gstack-checks run --timeout 2400` | No failures or skips |
+| Backend lint/format | PASS | `ruff check .`, `ruff format --check .` | |
+| Migration | PASS | `alembic upgrade head` on the dev DB; migration tests | Chunks written before `0011` become searchable; downgrade then upgrade keeps chunk text; models match migrations |
+| End to end, dev DB | PASS | upload through the API, the real `python -m app.worker`, then search over HTTP | A question with a word the document lacks found it, a Roman Urdu question found it, "the and of" returned nothing, GET 405, a 501-character question 422. The API and worker logs held no question or document text |
+| Test sensitivity | 12 of 13 caught | one guard at a time, one test file per process | Workspace, agent and ready filters, the pass-1 exclusion, the stop-word filter, the any-word pass, the excerpt cut, the throttle, counting after the access check, both request limits; the result cap was caught after a test was added. One redundant survivor: the early return for a question without real words (the query would match nothing anyway) |
+| Frontend | unchanged | | |
+
+- **Review:** a simplification pass (five reviewers): chunk inserts no longer read the generated columns back, so a document's chunks go in as one multi-row INSERT. Then one independent Claude reviewer, reading only (the owner's rule; the code-review skill's multi-agent mode was not used): no P0 or P1. Fixed: P2, words in scripts with combining marks (Hindi, Urdu with diacritics, decomposed accents) fell apart into single letters, so the any-word pass missed them; P3s: a test that a some-words chunk never outranks an every-word chunk, 422 bodies checked for the question, nullable column types. Not fixed (P3): a few single tokens are split differently from PostgreSQL's parser (`the-of`, `3.5`); the English half of the first pass still matches those.
+- **`/verify`:** `READY_FOR_SHIP tree=911dd2fde9f4 checks=tests not_covered=none` (753 s).
+- **Known limitations:**
+  - Full-text search finds shared words only; a question in other words than the document can return nothing (embeddings later, ADR-0007).
+  - English is the only stemming language; other languages match exact words.
+  - Documents stored in decomposed Unicode do not match a composed question; text is normally stored composed.
+  - No search screen; Slice 4.4 brings retrieval into chat.
+- **Commit / push:** seven commits on `slice-4.3` plus this status update, merged into `main` and pushed; branch `slice-4.3` deleted.
+- **Next smallest task:** Slice 4.4 — retrieval in the agent runtime
