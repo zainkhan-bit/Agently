@@ -101,7 +101,9 @@ class FullTextRetriever:
     ) -> list[Excerpt]:
         settings = get_settings()
         limit = min(limit, settings.knowledge_search_max_results)
-        meaningful = list(db.scalars(_MEANINGFUL, {"words": words(question)})) if limit > 0 else []
+        if limit <= 0:
+            return []
+        meaningful = list(db.scalars(_MEANINGFUL, {"words": words(question)}))
         if not meaningful:
             return []  # only stop words or punctuation: no query could match anything real
         scope = {"workspace_id": workspace_id, "agent_id": agent_id}
@@ -135,5 +137,5 @@ class FullTextRetriever:
 
 
 def get_retriever() -> Retriever:
-    """The one way callers obtain a retriever. Choosing pgvector later happens here."""
+    """The one way callers obtain a retriever: replacing the implementation changes only this."""
     return FullTextRetriever()

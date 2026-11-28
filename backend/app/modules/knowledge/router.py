@@ -78,7 +78,8 @@ class SearchLimitError(RateLimitError):
 
 
 def count_search(_: AgentInWorkspace, user: CurrentUser, db: Db) -> None:
-    """After the access check, so that outsiders count nothing. Refused searches count."""
+    """After the access check, so that outsiders count nothing. A request with an invalid body
+    still counts: validation runs after the dependencies."""
     if throttle.record_attempt(db, throttle.search_limits(user.id)) is None:
         raise SearchLimitError()
 

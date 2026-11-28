@@ -96,6 +96,8 @@ class KnowledgeChunk(UUIDPrimaryKeyMixin, Base):
         Index("ix_knowledge_chunks_search_english", "search_english", postgresql_using="gin"),
         Index("ix_knowledge_chunks_search_simple", "search_simple", postgresql_using="gin"),
     )
+    # The search columns are for SQL only: never read them back after an insert, never load them.
+    __mapper_args__ = {"eager_defaults": False}
 
     source_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
     # Copies of the source's, kept equal by the foreign key, so that retrieval can filter here.
@@ -107,8 +109,12 @@ class KnowledgeChunk(UUIDPrimaryKeyMixin, Base):
     # Search forms of the text, kept by PostgreSQL itself: stemmed English, and exact words for
     # everything English stemming does not know (Roman Urdu, names, codes).
     search_english: Mapped[str] = mapped_column(
-        TSVECTOR, Computed("to_tsvector('english'::regconfig, content)", persisted=True)
+        TSVECTOR,
+        Computed("to_tsvector('english'::regconfig, content)", persisted=True),
+        deferred=True,
     )
     search_simple: Mapped[str] = mapped_column(
-        TSVECTOR, Computed("to_tsvector('simple'::regconfig, content)", persisted=True)
+        TSVECTOR,
+        Computed("to_tsvector('simple'::regconfig, content)", persisted=True),
+        deferred=True,
     )
