@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     knowledge_upload_limit_per_user: int = Field(default=30, gt=0)
     knowledge_upload_limit_per_workspace: int = Field(default=100, gt=0)
     knowledge_upload_window_minutes: int = Field(default=60, gt=0)
+    # Searching an agent's knowledge. Questions and excerpts are never logged.
+    knowledge_search_question_max_chars: int = Field(default=500, gt=0, le=10_000)
+    knowledge_search_max_results: int = Field(default=10, gt=0, le=100)
+    knowledge_search_default_results: int = Field(default=5, gt=0, le=100)
+    knowledge_search_excerpt_max_chars: int = Field(default=1_500, gt=0, le=100_000)
+    knowledge_search_limit_per_user: int = Field(default=60, gt=0)
+    knowledge_search_window_minutes: int = Field(default=10, gt=0)
 
     # None = no AI features. The mock is not an AI and never runs in production.
     model_provider: Literal["mock", "gemini"] | None = None

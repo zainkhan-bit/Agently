@@ -72,6 +72,12 @@ def configure(monkeypatch, tmp_path) -> Iterator[Callable[..., None]]:
         knowledge_upload_limit_per_user=1000,
         knowledge_upload_limit_per_workspace=1000,
         knowledge_upload_window_minutes=60,
+        knowledge_search_question_max_chars=500,
+        knowledge_search_max_results=10,
+        knowledge_search_default_results=5,
+        knowledge_search_excerpt_max_chars=1_500,
+        knowledge_search_limit_per_user=1000,
+        knowledge_search_window_minutes=10,
     )
     yield apply
     get_settings.cache_clear()
