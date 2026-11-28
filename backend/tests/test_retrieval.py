@@ -204,3 +204,10 @@ def test_questions_are_split_into_plain_words(question, expected) -> None:
 def test_an_unknown_agent_finds_nothing(db_session, mine) -> None:
     source(db_session, mine, REFUND)
     assert get_retriever().search(db_session, mine.workspace_id, uuid.uuid4(), "refund", 5) == []
+
+
+def test_a_direct_caller_never_gets_more_than_the_configured_maximum(db_session, mine) -> None:
+    """Slice 4.4 calls the retriever without the endpoint's validation."""
+    source(db_session, mine, *[f"refund note number {n}" for n in range(15)])
+    assert len(search(db_session, mine, "refund", limit=50)) == 10
+    assert search(db_session, mine, "refund", limit=0) == []
