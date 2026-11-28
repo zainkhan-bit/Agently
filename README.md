@@ -52,7 +52,7 @@ Copy-Item .env.example .env   # then edit DATABASE_URL
 
 The seed script creates `demo@agently.local` with a random password that it prints once. It is safe to re-run, and refuses to run when `ENVIRONMENT` is `production` or unset, or when `DATABASE_URL` is not a local database. To get a new password, delete that user and its Demo Workspace, then run it again. **Databases seeded before Slice 1.2 still have the old published password**: do this on any you keep.
 
-Uploaded knowledge files are processed by a separate worker process (ADR-0004), never by the API. Run it in another terminal while you work with knowledge sources: `.venv\Scripts\python -m app.worker` (from `backend/`; Ctrl+C stops it). Without it, uploads stay `pending`.
+Uploaded knowledge files are processed by a separate worker process (ADR-0004), never by the API. Run it in another terminal while you work with knowledge sources: `.venv\Scripts\python -m app.worker` (from `backend/`; Ctrl+C stops it). Without it, uploads stay `pending`. Only `ready` sources are searched (`POST .../agents/{id}/knowledge/search`); after pulling, run `.venv\Scriptslembic upgrade head` so existing chunks get their search columns.
 
 `--no-proxy-headers` is required: without it uvicorn lets a client choose its own IP address through `X-Forwarded-For`, which bypasses the login and signup limits. Schema and deletion rules: `docs/DATABASE_DESIGN.md`.
 

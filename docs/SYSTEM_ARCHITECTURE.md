@@ -8,7 +8,7 @@ A **modular monolith**: one FastAPI backend process (plus a worker process from 
 Browser ──HTTPS──► Next.js frontend (UI, server components)
                      │  /api/*  rewrite (same origin → cookies stay first-party)
                      ▼
-                  FastAPI backend ── SQLAlchemy ──► PostgreSQL (+ pgvector, Phase 4)
+                  FastAPI backend ── SQLAlchemy ──► PostgreSQL (full-text search now; pgvector before deployment, ADR-0007)
                      │                                  ▲
                      ├─► Model provider adapter ──► Gemini API / mock
                      └─► Local file storage (dev) / S3-compatible (prod)
@@ -22,7 +22,7 @@ Browser ──HTTPS──► Next.js frontend (UI, server components)
 | Backend | Python 3.12+ (dev machine: 3.14), FastAPI, Pydantic v2, pydantic-settings |
 | ORM / migrations | SQLAlchemy 2.x, Alembic |
 | DB driver | psycopg 3 |
-| Database | PostgreSQL 16+ (dev machine: 18); pgvector in Phase 4 |
+| Database | PostgreSQL 16+ (dev machine: 18); retrieval by full-text search until pgvector is installed (ADR-0007) |
 | Background jobs | PostgreSQL-backed job table + worker (ADR-0004) |
 | Frontend | Next.js (App Router) + TypeScript + Tailwind CSS |
 | Backend tests | pytest, httpx TestClient, real PostgreSQL test database |
