@@ -195,6 +195,8 @@ def test_an_excerpt_carries_no_score() -> None:
         ("fees kitni hai", ["fees", "kitni", "hai"]),
         ('"x" -OR ((y)) a_b', ["x", "OR", "y", "a", "b"]),
         ("?!... ;", []),
+        ("हिन्दी शुल्क", ["हिन्दी", "शुल्क"]),
+        ("café", ["café"]),
     ],
 )
 def test_questions_are_split_into_plain_words(question, expected) -> None:
@@ -211,3 +213,23 @@ def test_a_direct_caller_never_gets_more_than_the_configured_maximum(db_session,
     source(db_session, mine, *[f"refund note number {n}" for n in range(15)])
     assert len(search(db_session, mine, "refund", limit=50)) == 10
     assert search(db_session, mine, "refund", limit=0) == []
+
+
+def test_scripts_with_combining_marks_keep_whole_words(db_session, mine) -> None:
+    hindi = "प्रवेश शुल्क पाँच हज़ार रुपये है"
+    source(db_session, mine, hindi, REFUND)
+    # "क्या" is not in the document, so only the any-word pass can find it.
+    assert texts(search(db_session, mine, "क्या प्रवेश शुल्क")) == [hindi]
+
+
+def test_decomposed_accents_match_the_composed_index(db_session, mine) -> None:
+    menu = "Le café ouvre à neuf heures."
+    source(db_session, mine, menu, REFUND)
+    assert texts(search(db_session, mine, "cafe\u0301 horaires")) == [menu]
+
+
+def test_a_some_words_chunk_never_outranks_an_every_word_chunk(db_session, mine) -> None:
+    every = "Refund for a damaged purchase."
+    some = "refund " * 30
+    source(db_session, mine, some, every)
+    assert texts(search(db_session, mine, "refund damaged purchase", limit=2)) == [every, some]

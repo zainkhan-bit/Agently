@@ -108,12 +108,12 @@ class KnowledgeChunk(UUIDPrimaryKeyMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # Search forms of the text, kept by PostgreSQL itself: stemmed English, and exact words for
     # everything English stemming does not know (Roman Urdu, names, codes).
-    search_english: Mapped[str] = mapped_column(
+    search_english: Mapped[str | None] = mapped_column(
         TSVECTOR,
         Computed("to_tsvector('english'::regconfig, content)", persisted=True),
         deferred=True,
     )
-    search_simple: Mapped[str] = mapped_column(
+    search_simple: Mapped[str | None] = mapped_column(
         TSVECTOR,
         Computed("to_tsvector('simple'::regconfig, content)", persisted=True),
         deferred=True,

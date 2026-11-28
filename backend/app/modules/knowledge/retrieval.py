@@ -8,7 +8,7 @@ are on different scales and must not be compared or used as thresholds.
 Questions and excerpts are private: nothing here logs them.
 """
 
-import re
+import unicodedata
 import uuid
 from dataclasses import dataclass
 from typing import Protocol
@@ -17,9 +17,6 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-
-# Letters and digits in any script. Never punctuation, so no search operator can get through.
-_WORD = re.compile(r"[^\W_]+")
 
 
 @dataclass(frozen=True)
@@ -45,7 +42,20 @@ class Retriever(Protocol):
 
 
 def words(question: str) -> list[str]:
-    return _WORD.findall(question)
+    """Runs of letters, combining marks and digits, in any script. Never punctuation or
+    symbols, so no search operator can get through. Marks count as part of a word, or Hindi
+    and decomposed accents ("café") would fall apart into single letters."""
+    found: list[str] = []
+    current: list[str] = []
+    for character in question:
+        if unicodedata.category(character)[0] in "LMN":
+            current.append(character)
+        elif current:
+            found.append("".join(current))
+            current = []
+    if current:
+        found.append("".join(current))
+    return found
 
 
 # PostgreSQL's English configuration drops stop words; 'simple' keeps every word. So the
@@ -103,6 +113,8 @@ class FullTextRetriever:
         limit = min(limit, settings.knowledge_search_max_results)
         if limit <= 0:
             return []
+        # PostgreSQL compares lexemes as stored bytes; documents are almost always composed (NFC).
+        question = unicodedata.normalize("NFC", question)
         meaningful = list(db.scalars(_MEANINGFUL, {"words": words(question)}))
         if not meaningful:
             return []  # only stop words or punctuation: no query could match anything real

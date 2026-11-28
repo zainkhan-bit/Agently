@@ -119,6 +119,9 @@ def test_requests_beyond_the_limits_are_refused_before_searching(c, monkeypatch,
     response = c.member.post(url(c), json=body)
     assert response.status_code == 422
     assert code(response) == "validation_error"
+    question = body.get("question")
+    if isinstance(question, str) and question.strip():
+        assert question not in response.text
 
 
 def test_a_lower_configured_question_limit_is_enforced(c, configure) -> None:
