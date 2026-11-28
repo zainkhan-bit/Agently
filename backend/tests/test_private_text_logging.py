@@ -18,6 +18,7 @@ from app.core.config import get_settings
 from app.core.logs import configure_logging
 from app.models import StoredMessage, Workspace
 from app.modules.conversations import service
+from app.modules.knowledge import retrieval
 from app.modules.workspaces.service import WorkspaceContext
 from tests.auth_helpers import ORIGIN
 from tests.test_agents_api import create, s  # noqa: F401
@@ -144,3 +145,16 @@ def test_a_refused_message_says_nothing_about_its_text(s, db_session, caplog) ->
         )
     assert SECRET not in "".join(traceback.format_exception(caught.value))
     assert SECRET not in caplog.text
+
+
+def test_a_failing_search_shows_no_question(production_engine, caplog) -> None:
+    """A database error during a search must not carry the question, a bound parameter."""
+    caplog.set_level(logging.DEBUG)
+    with Session(production_engine) as session:
+        with pytest.raises(DBAPIError) as caught:
+            # A workspace id that is not a UUID makes PostgreSQL refuse the query itself.
+            retrieval.FullTextRetriever().search(session, "not-a-uuid", uuid.uuid4(), SECRET, 5)
+    logging.getLogger("uvicorn.error").error("Exception in ASGI application", exc_info=caught.value)
+    for text in (caplog.text, "".join(traceback.format_exception(caught.value))):
+        assert "diagnosis" not in text
+    assert caught.value.orig.sqlstate

@@ -42,6 +42,7 @@ def create_app() -> FastAPI:
     app.include_router(agents.router, prefix="/api")
     app.include_router(conversations.router, prefix="/api")
     app.include_router(knowledge.router, prefix="/api")
+    app.include_router(knowledge.search_router, prefix="/api")
     app.include_router(runtime.router, prefix="/api")
     app.include_router(agent_builder.router, prefix="/api")
     return app

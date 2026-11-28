@@ -4,6 +4,9 @@ An upload is the file itself as the request body, with its name percent-encoded 
 ``X-File-Name`` header: not in the URL, which access logs print. The body is counted while it is
 read, so nothing larger than the limit is ever stored, and no form parser keeps an unchecked copy.
 There is no route that returns a file.
+
+Search lives under /api/workspaces/{workspace_id}/agents/{agent_id}/knowledge/search: a POST, so
+that the question stays out of the URL. Questions and excerpts are never logged.
 """
 
 import logging
@@ -21,15 +24,28 @@ from app.modules.agents.dependencies import AgentInWorkspace
 from app.modules.conversations.dependencies import never_cached
 from app.modules.identity import throttle
 from app.modules.identity.dependencies import CurrentUser, Db
-from app.modules.knowledge import filetypes, service, storage
+from app.modules.knowledge import filetypes, retrieval, service, storage
 from app.modules.knowledge.models import KnowledgeSource
-from app.modules.knowledge.schemas import SourceOut, SourcePage
+from app.modules.knowledge.schemas import (
+    ExcerptOut,
+    SearchRequest,
+    SearchResults,
+    SourceOut,
+    SourcePage,
+)
 from app.modules.workspaces.dependencies import MemberContext
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/agents/{agent_id}/sources",
+    tags=["knowledge"],
+    dependencies=[Depends(never_cached)],
+)
+
+
+search_router = APIRouter(
+    prefix="/workspaces/{workspace_id}/agents/{agent_id}/knowledge",
     tags=["knowledge"],
     dependencies=[Depends(never_cached)],
 )
@@ -55,6 +71,16 @@ def count_upload(_: AgentInWorkspace, context: MemberContext, user: CurrentUser,
         raise UploadLimitError()
     # Ends the count's transaction: reading a slow body must not keep a pooled connection.
     db.commit()
+
+
+class SearchLimitError(RateLimitError):
+    message = "You searched too often. Please try again in a few minutes."
+
+
+def count_search(_: AgentInWorkspace, user: CurrentUser, db: Db) -> None:
+    """After the access check, so that outsiders count nothing. Refused searches count."""
+    if throttle.record_attempt(db, throttle.search_limits(user.id)) is None:
+        raise SearchLimitError()
 
 
 def get_source(
@@ -125,6 +151,16 @@ def delete_source(
     source: SourceOfAgent, agent: AgentInWorkspace, context: MemberContext, db: Db
 ) -> None:
     service.delete_source(db, context, agent.id, source.id)
+
+
+@search_router.post("/search", dependencies=[Depends(count_search)])
+def search(body: SearchRequest, agent: AgentInWorkspace, db: Db) -> SearchResults:
+    """Excerpts of the agent's ready documents, best first."""
+    limit = body.limit or get_settings().knowledge_search_default_results
+    found = retrieval.get_retriever().search(db, agent.workspace_id, agent.id, body.question, limit)
+    return SearchResults(
+        items=[ExcerptOut.model_validate(excerpt, from_attributes=True) for excerpt in found]
+    )
 
 
 async def _receive(request: Request, maximum: int) -> Path:

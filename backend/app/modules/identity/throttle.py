@@ -30,6 +30,7 @@ GENERATION_USER = "generation_user"
 GENERATION_WORKSPACE = "generation_workspace"
 UPLOAD_USER = "upload_user"
 UPLOAD_WORKSPACE = "upload_workspace"
+SEARCH_USER = "search_user"
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,12 @@ def upload_limits(user_id: uuid.UUID, workspace_id: uuid.UUID) -> list[Limit]:
             str(workspace_id),
         ),
     ]
+
+
+def search_limits(user_id: uuid.UUID) -> list[Limit]:
+    settings = get_settings()
+    window = settings.knowledge_search_window_minutes
+    return [_limit(SEARCH_USER, settings.knowledge_search_limit_per_user, window, str(user_id))]
 
 
 def message_limits(user_id: uuid.UUID, workspace_id: uuid.UUID) -> list[Limit]:

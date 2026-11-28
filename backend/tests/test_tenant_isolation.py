@@ -153,6 +153,9 @@ def test_matrix_covers_the_known_endpoints() -> None:
     assert set(NESTED_SWAPS) >= {
         (verb, source, name) for verb in ("GET", "DELETE") for name in ("agent_id", "source_id")
     }
+    search = ("POST", f"{agent}/knowledge/search")
+    assert search in set(MATRIX)
+    assert (*search, "agent_id") in set(OBJECT_SWAPS)
 
 
 def _private_but_unchecked(app) -> set[tuple[str, str]]:
@@ -331,6 +334,7 @@ VALID_BODIES = (
     {"version": 2},
     {"request_id": str(uuid.uuid4()), "content": "Hello"},
     {"request_id": str(uuid.uuid4())},  # stopping an answer
+    {"question": "refund"},  # searching knowledge
 )
 
 
